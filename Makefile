@@ -4,6 +4,16 @@ CFLAGS = -Wall -fno-strict-aliasing -g -I/usr/include/libxml2  -DHAVE_CONFIG_H
 LDFLAGS = -lxml2 -lpthread -lm -lz
 
 
+
+SOURCE := telescope.c \
+          functions.c \
+          cli.c \
+          queuelib.c \
+          status.c \
+          parserEngine.c \
+          fileReader.c \
+          connectionManager.c \
+
 AR = @AR@
 ARFLAGS = @ARFLAGS@
 RANLIB = @RANLIB@
@@ -31,24 +41,24 @@ htmldir = ${docdir}
 
 SRCDIR = ./src
 BINDIR = ./bin
-OBJECTDIR = ./Obj
-MAINOBJS  = $(OBJECTDIR)/telescope.o
+OBJDIR = ./Obj
+OBJECTS  = $(foreach var,$(SOURCE),$(OBJDIR)/$(var:.c=.o))
 MAINEXEC  = $(BINDIR)/telescope
 
-OBJECTS1 = $(MAINOBJS)
+.PHONY: directories
 
-all: $(EXEC)
+all: directories $(EXEC)
 
-$(EXEC): $(OBJECTS1) 
-	$(CC) $(CFLAGS) $(OBJECTS1) $(LDFLAGS) -o $(MAINEXEC)
+$(EXEC): $(OBJECTS) 
+	$(CC) $(CFLAGS) $(OBJECTS)  $(LDFLAGS) -o $(MAINEXEC)
 
-$(OBJECTDIR)/telescope.o: $(SRCDIR)/telescope.c
-	$(CC) $(CFLAGS) -c $(SRCDIR)/telescope.c -o $(OBJECTDIR)/telescope.o
-
-
+$(OBJDIR)/%.o: $(SRCDIR)/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
 clean:
-	rm -f $(EXEC) $(MAINEXEC) $(OBJECTS1)  	
+	rm -f $(EXEC) $(MAINEXEC) $(OBJECTS)  	
 
+directories:
+	mkdir -p Obj bin
 
 # build tests
 build-tests: .build-tests-post
