@@ -27,55 +27,40 @@
 
 extern const xmlChar msg_start[];
 extern int start_len_pos;
+extern int logging_sock;
 
 //
 //functions' declarations
 //
-int prepareServerSocket( void );
-
 void setTerminateFlag( int sigtype );
-int setSignals( void );
-int establishPeerConnection( struct hostent *hp , char * ipptr, int port );
 
-///termination signals handling functions to close TeleScope gracefully
+//! @brief termination signals handling functions to close TeleScope gracefully
 void terminate_( int sigtype );
 
-///returns IP for the connection
-int returnip( struct hostent *hp , char * ipptr );
-
-void processStream_static_buffer( char * filename );
-int receive_xml_static_buffer( char *filename );
-
-void *Reader( void *param );
+int launchSubscriberThread( const char * host, const char * port, const char * file );
 
 void launchClientsThreadPool( void );
 
-//save the peer address from the incoming client connection
-int getPeerAddress( const struct sockaddr *addr, char *ip );
-
-void initialize_terminateLock( void );
-int update_terminateCounter( void );
-int get_terminateCounter( void );
-
-int resetXmlBuff( void );
-int reset_key( void );
-int godaemon( char *rundir, char *pidfile, int noclose );
-
-void setupServer( void );
-int update_threadIDCounter( void );
-int get_threadIDCounter( void );
+int setSignals( void );
 
 void print_service_ports( void );
 
-/**@brief Remove extra white space before and after str
- * @return 0 on success
- */
+//! @brief Remove extra white space before and after str
+//! @return 0 on success
 int trim( char *str );
 
 long long int getTotalMessagesReceived();
+
 long long int getMatchingMessages();
+
 void incMatchingMessages();
+
 QueueTable getQueueTable();
 
+//! @brief report duration telescope has been running
+//! @param sock socket to write output to.
+void showUptime( int sock );
+
 void logMessage( FILE *stream, const char *format, ... );
+
 #endif

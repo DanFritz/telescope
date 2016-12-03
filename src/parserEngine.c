@@ -1170,7 +1170,7 @@ int analyse( xmlNode *root_element )
     return -1;
 }
 
-int analyze( char *filename, xmlNode *root_element, char * buf )
+int analyze( const char *filename, xmlNode *root_element, char * buf )
 {
     int exp_n = 0;
     int cycle_and[256];

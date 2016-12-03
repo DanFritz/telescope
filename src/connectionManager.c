@@ -23,9 +23,10 @@
 #include "connectionManager.h"
 
 struct Broker {
-  char ip[MAX_LINE];
-  long port;
-  char name[MAX_LINE];
+  char ip[MIN_LINE];
+  char port[MIN_LINE];
+  char name[MIN_LINE];
+  char status[MIN_LINE];
   long priority;
 };
 
@@ -35,17 +36,43 @@ int currentBroker = 0;
 
 int addBrokerImpl( char * buffer, int source );
 void sortBrokers();
+void readTopology();
 
-void setupConnectionManager()
+void setupBrokerList( const char * hvalue, const char * port )
+{
+    // If we have an existing broker list, delete it.
+    if ( broker )
+    {
+        free(broker);
+        broker = NULL;
+    }
+    numBrokers = 0;
+    currentBroker = 0;
+
+    if ( hvalue && port )
+    {
+        broker = realloc( broker, sizeof( struct Broker ) * ( numBrokers + 1 ) );
+        memset(broker + numBrokers, '\0', sizeof( struct Broker) );
+
+        strncpy( broker[numBrokers].ip, hvalue, MIN_LINE );
+        strncpy( broker[numBrokers].port, port, MIN_LINE );
+        strncpy( broker[numBrokers].name, hvalue, MIN_LINE );
+        broker[numBrokers].priority = 100;
+        numBrokers++;
+    }
+
+    readTopology();
+}
+
+void readTopology()
 {
     long readSize;
     char * readBuffer = NULL;
     size_t len = 0;
-    broker = NULL;
     FILE * fd = fopen( TOPOLOGY_CNF, "r" );
 
     if ( ! fd ) {
-        logMessage(stderr, "Unable to read topology file. Only host from commandline will be used.\n" );
+        logMessage(stderr, "Unable to read topology file.\n" );
         return;
     }
 
@@ -95,25 +122,24 @@ int addBrokerImpl( char * buffer, int source )
         switch (i)
         {
             case 0:
-                if ( strlen( token ) > MAX_LINE )
+                if ( strlen( token ) > MIN_LINE-1 )
                     error = failBrokerAdd( "ip", source );
                 else
-                    strncpy( broker[numBrokers].ip, token, MAX_LINE );
+                    strncpy( broker[numBrokers].ip, token, MIN_LINE );
                 break;
             case 1:
-                broker[numBrokers].port = strtol( token, &endNum, 10 );
-                if ( ( errno == ERANGE && ( broker[numBrokers].port == LONG_MAX || broker[numBrokers].port == LONG_MIN ) )
-                        || ( errno != 0 && broker[numBrokers].port == 0 ) || *endNum != '\0' )
+                if ( strlen( token ) > MIN_LINE-1 )
                     error = failBrokerAdd( "port", source );
-
+                else
+                    strncpy( broker[numBrokers].port, token, MIN_LINE );
                 break;
             case 2:
-                if ( strlen( token ) > MAX_LINE )
+                if ( strlen( token ) > MIN_LINE-1 )
                 {
                     error = failBrokerAdd( "server name", source );
                 }
                 else
-                    strncpy( broker[numBrokers].name, token, MAX_LINE );
+                    strncpy( broker[numBrokers].name, token, MIN_LINE );
                 break;
             case 3:
                 broker[numBrokers].priority = strtol( token, &endNum, 10 );
@@ -239,7 +265,7 @@ int changeBrokerPriority( char * buffer )
 
 void printBroker( struct Broker * b, int sock ) {
     char tmp[MAX_LINE];
-    snprintf(tmp, MAX_LINE, "%s; %ld; %s; %ld\n", b->ip, b->port, b->name, b->priority );
+    snprintf(tmp, MAX_LINE, "%s; %s; %s; %ld : %s\n", b->ip, b->port, b->name, b->priority, b->status );
     write( sock, tmp, strlen( tmp ) );
 }
 
@@ -249,60 +275,84 @@ void showBrokerMap( int sock )
     for ( i = 0; i < numBrokers; i++ )
         printBroker( &broker[i], sock );
 }
+void showCurrentBroker( int sock )
+{
+    if ( currentBroker < numBrokers )
+        printBroker( &broker[currentBroker], sock );
+}
 
+
+int connectToBroker( struct Broker * b )
+{
+    int s, sock;
+    struct addrinfo hints;
+    struct addrinfo *result, *rp;
+
+    logMessage( stdout, "Connecting to %s\n", broker[currentBroker].name );
+
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC; // IPv4 or IPv6 addresses ok
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = (AI_V4MAPPED | AI_ADDRCONFIG);
+    hints.ai_protocol = 0;
+
+
+    // Get IP address
+    s = getaddrinfo(broker[currentBroker].ip, broker[currentBroker].port, &hints, &result);
+    if ( s != 0 )
+    {
+        logMessage( stderr, "%s is not a valid host name: %s\n", broker[currentBroker].ip, gai_strerror(s) );
+        strncpy( broker[currentBroker].status, "Invalid host name", MIN_LINE);
+        freeaddrinfo(result);
+        return -1;
+    }
+
+    // Traverse result linked list until we find an address we can connect to.
+    for( rp = result; rp != NULL; rp = rp->ai_next )
+    {
+
+        sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (sock == -1)
+            continue;
+        if (connect(sock, rp->ai_addr, rp->ai_addrlen) != -1)
+                    break;                  /* Success */
+
+        close(sock);
+    }
+
+    if ( rp == NULL )
+    {
+        logMessage( stderr, "Unable to connect to host %s\n", broker[currentBroker].ip );
+        strncpy( broker[currentBroker].status, "Failed to connect", MIN_LINE);
+        freeaddrinfo(result);
+        return -1;
+    }
+
+    strncpy( broker[currentBroker].status, "Connected", MIN_LINE);
+    return sock;
+}
+
+void showFaultHistory( int sock )
+{
+    // TODO implement
+}
 void connectToNextBroker( int * sock )
 {
-    int v = 1;
-    struct hostent *he;
-    struct sockaddr_in sin;
-
-    if ( currentBroker < numBrokers )
+    *sock = -1;
+    if ( currentBroker > 0 )
+        strncpy( broker[currentBroker-1].status, "Disconnected", MIN_LINE);
+    while ( *sock < 0 )
     {
-        logMessage( stdout, "Connecting to %s\n", broker[currentBroker].name );
-        // Get IP address
-        if ( (he = gethostbyname( broker[currentBroker].ip ) ) == NULL)
+        if ( currentBroker < numBrokers )
         {
-            // get the host info
-            herror("gethostbyname");
+            *sock = connectToBroker( &broker[currentBroker] );
+            currentBroker++;
         }
         else
         {
-
-            // copy the network address to sockaddr_in structure
-            memcpy(&sin.sin_addr, he->h_addr_list[0], he->h_length);
-            sin.sin_family = AF_INET;
-            sin.sin_port = htons(broker[currentBroker].port);
-
-            // Create the socket
-            if ( ( *sock = socket( PF_INET, SOCK_STREAM, 0 ) ) < 0 )
-            {
-                perror( "Cannot open a socket to broker.");
-            }
-            else
-            {
-                //lets reuse the socket!
-                setsockopt( *sock, SOL_SOCKET, SO_REUSEADDR, &v, sizeof( v ) );
-
-                // Establish the connection
-                if ( connect( *sock, (struct sockaddr*)&sin, sizeof( sin ) )
-                        < 0 )
-                {
-                    perror( "can't connect to the XML data stream publisher" );
-                    close( *sock );
-                }
-                else
-                {
-                    logMessage( stdout, "connected to the XML data stream publisher %s.\n", broker[currentBroker].name );
-                }
-            }
+            logMessage( stdout, "Unable to connect to a broker. Terminating\n" );
+            setTerminateFlag(1);
+            break;
         }
-        currentBroker++;
     }
-    else
-    {
-        logMessage( stdout, "Unable to connect to a broker. Terminating\n" );
-        setTerminateFlag(1);
-    }
-
-
 }

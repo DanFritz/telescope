@@ -42,7 +42,6 @@
 #include <regex.h>
 #include <signal.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 
 #include <libxml/parser.h>
 #include <libxml/tree.h>

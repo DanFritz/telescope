@@ -23,7 +23,7 @@
 #include "cli.h"
 
 int cli_sock;
-pthread_t CLIThreadID = 0;
+pthread_t CLIThreadID;
 
 int prepareCLIThread( void );
 void *CLIThread( void *thread_info );
@@ -49,7 +49,14 @@ const char * helpMessage = "available commands are :\n"
                            "  remove broker (rb)\n"
                            "  change broker priority (cbp)\n"
                            "  show map (sm)\n"
+                           "  show current broker (scb)\n"
+                           "  show fault history (sfh)\n"
+                           "  show uptime (su)\n"
+                           "  change password (su)\n"
                            "  shutdown (sd)\n";
+
+void changePassword( int sock ) {} // TODO implement
+
 void launchCLIThread( )
 {
     cli_sock = prepareCLIThread();
@@ -133,6 +140,8 @@ void *CLIThread( void *thread_info )
         }
         else
         {
+            // Setup log messages to be sent through the CLI socket;
+            logging_sock = sock;
 
             memset( buffer, '\0', sizeof(buffer) );
 
@@ -144,7 +153,7 @@ void *CLIThread( void *thread_info )
 
             if ( strcmp( DEFAULT_ACCESS_PASSWORD, buffer ) == 0 )
             {
-                for ( ;; )
+                for ( ; terminateFlag == 0 ; )
                 {
 
                     memset( buffer, '\0', sizeof(buffer) );
@@ -152,7 +161,6 @@ void *CLIThread( void *thread_info )
                     write( sock, prompt, strlen( prompt ) );
                     if ( receivedInBuffer( buffer, sock, MAX_LINE ) <= 0 )
                         break;
-
                     if ( strcmp( buffer, EXIT_STRING ) == 0
                             || strcmp( buffer, "q" ) == 0 )
                         break;
@@ -219,13 +227,26 @@ void *CLIThread( void *thread_info )
                     }
                     else if ( strcmp( buffer, "sm" ) == 0 )
                         showBrokerMap( sock );
+                    else if ( strcmp( buffer, "scb" ) == 0 )
+                        showCurrentBroker( sock );
+                    else if ( strcmp( buffer, "sfh" ) == 0 )
+                        showFaultHistory( sock );
+                    else if ( strcmp( buffer, "su" ) == 0 )
+                        showUptime( sock );
+                    else if ( strcmp( buffer, "cp" ) == 0 )
+                        changePassword( sock );
+                    else if ( buffer[0] == '\0' )
+                        ; // Do nothing except write the prompt again on empty string
                     else
                         write( sock, errorMessage, strlen( errorMessage ) );
                 } //end of for loop
+
+                logging_sock = 0;
                 close( sock ); //terminate connection immediately upon exit
             }
             else
             {
+                logging_sock = 0;
                 close( sock ); //end of passwd checking - if passwd does not match
             }
             //printf("buffer len is: %d ", strlen(buffer));

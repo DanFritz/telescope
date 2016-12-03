@@ -24,67 +24,57 @@
 
 #ifdef LIBXML_TREE_ENABLED
 
-int serverflag = 0;
 long startingPort = DEFAULT_STARTING_PORT;
+int serverflag = 0;
 
 int main( int argc, char *argv[] ) {
     int c, i; //dumb variables...
     int logflag = 0; //turn log file writing on
-    int dataflag = 0; //turn data file reading on
-    int pflag = 0;
-    int hflag = 0;
-    int fflag = 0;
-    int eflag = 0;
+    int subFlag = 0;
 
     char *fvalue = NULL;
     char *data_fvalue = NULL;
     char *evalue = NULL;
+    char *ovalue = NULL;
 
     char *pvalue = NULL;
-    char *hvalue = NULL;
     const char TeleScopeLog[] = "/var/log/telescope.log"; //default log file location
-    char ip[MAX_LINE];
 
-    struct hostent *hp;
-    int port = 0;
+    char * hvalue = NULL;
 
     //check the command options using getopt:
-    while ( ( c = getopt( argc, argv, "sh:o:p:f:e:ld:" ) ) != -1 )
-        switch ( c ) {
-            case 's':
-                serverflag = 1;
+    while ( ( c = getopt( argc, argv, "sh:o:p:f:e:lud:" ) ) != -1 )
+    {
+        switch ( c )
+        {
+            case 'd':
+                data_fvalue = optarg;
+                break;
+            case 'e':
+                evalue = optarg;
+                break;
+            case 'f':
+                fvalue = optarg;
+                break;
+            case 'h':
+                subFlag = 1;
+                hvalue = optarg;
                 break;
             case 'l':
                 logflag = 1; //turn logging on - else write to /dev/null
                 break;
-            case 'd':
-                dataflag = 1; //turn data file reading on
-                data_fvalue = optarg;
-                break;
-            case 'h':
-                hflag = 1;
-                hvalue = optarg;
-                break;
             case 'o':
-                startingPort = strtol( optarg, NULL, 10 );
-                if ( ( errno == ERANGE && ( startingPort == LONG_MAX || startingPort == LONG_MIN ) )
-                        || ( errno != 0 && startingPort == 0 ) )
-                {
-                    perror( "Invalid Server port number" );
-                    return -1;
-                }
+                ovalue = optarg;
                 break;
             case 'p':
-                pflag = 1;
+                subFlag = 1;
                 pvalue = optarg;
                 break;
-            case 'f':
-                fflag = 1;
-                fvalue = optarg;
+            case 's':
+                serverflag = 1;
                 break;
-            case 'e':
-                eflag = 1;
-                evalue = optarg;
+            case 'u':
+                subFlag = 1;
                 break;
             case '?':
                 if ( optopt == 'h' ) fprintf( stderr,
@@ -100,81 +90,108 @@ int main( int argc, char *argv[] ) {
                 else {
                     fprintf( stderr, "Unknown option character `\\x%x'.\n",
                         optopt );
-                    return 1;
-                    exit( 1 );
                 }
+                return 1;
             default:
-                abort();
+                return 1;
         }
+    }
 
-    if ( argc < 5 ) {
-        fprintf( stderr,
-            "Usage: Illegal number of arguments/options on the command line. There are 2 mandatory options to specify: -f -e.\n" );
+    // Print usage if no arguments provided
+    if ( argc < 2 )
+    {
         fprintf( stderr, "Usage:\n" );
-        fprintf( stderr, "-s - turn on server mode\n" );
-        fprintf( stderr, "-l - turn logging on to file\n" );
-        fprintf( stderr, "-d - turn xml data file reading on (specify filename)\n" );
-        fprintf( stderr, "-h - hostname to connect to\n" );
-        fprintf( stderr, "-p - port number\n" );
-        fprintf( stderr, "-f - filename to write the captured xml messages\n" );
-        fprintf( stderr, "-e - query expression to match in the xml stream\n" );
+        fprintf( stderr, "  Subscriber Mode: %s (-u|-h host -p port) -f (datafile) -e (expression) )\n", argv[0] );
+        fprintf( stderr, "    -u - turn on subscriber mode (subscribe to broker from topology.cnf)\n" );
+        fprintf( stderr, "    -h - initial host to connect to in subscriber mode\n" );
+        fprintf( stderr, "    -p - initial port number in subscriber mode\n" );
+        fprintf( stderr, "    -f - filename to write the captured xml messages\n" );
+        fprintf( stderr, "    -e - query expression to match in the xml stream\n" );
+        fprintf( stderr, "  Server Mode: %s -s [-d (datafile)] [-o port]\n", argv[0] );
+        fprintf( stderr, "    -s - turn on server mode\n" );
+        fprintf( stderr, "    -l - turn logging on to file\n" );
+        fprintf( stderr, "    -d - turn xml data file reading on (specify filename)\n" );
+        fprintf( stderr, "    -o - outgoing connection port number\n" );
+        fprintf( stderr, "  Server/Subscriber Mode: %s (subscriber mode arguments) (server mode arguments)\n", argv[0] );
         return -1;
     }
 
     //checking invalid arguments...
-    for ( i = optind; i < argc; i++ ) {
+    for ( i = optind; i < argc; i++ )
+    {
         printf( "Non-option argument %s\n", argv[i] );
         return -1;
     }
 
-    if ( fflag != 1 ) {
-        perror(
-            "file to capture messages not defined! please specify the filename via the -f flag. Indicate /dev/null if not interested in capturing messages on disk." );
-        exit( -1 );
-    }
+    //subscriber mode checks
+    if ( subFlag )
+    {
+        if ( !fvalue )
+        {
+            perror( "File to capture messages not defined while in subscriber "
+                    "mode! Please specify the filename via the -f flag. Indicate "
+                    "/dev/null if not interested in capturing messages on disk." );
+            exit( -1 );
+        }
+        if ( strlen( fvalue ) > 255 )
+        {
+            perror( "Filename argument length is too long! Maximum Linux file "
+                    "name length is 255 characters!" );
+            exit( -1 );
+        }
 
-    if ( strlen( fvalue ) > 252 ) {
-        perror(
-            "FATAL: filename argument length is too long! Avoiding buffer overrun!" );
-        exit( -1 );
-    }
+        if (hvalue && !pvalue)
+        {
+            perror( "host defined but port not defined.");
+        }
 
-    if ( dataflag == 1 ) {
-        if ( strlen( data_fvalue ) > 252 ) {
-            perror(
-                "FATAL: data filename argument length is too long! Avoiding buffer overrun!" );
+        if ( !evalue )
+        {
+            perror( "expression not defined! please specify query via the -e "
+                    "flag." );
             exit( -1 );
         }
     }
+    else
+    {
+        if ( evalue )
+            perror( "-e option has no effect when not in subscriber mode." );
+        if ( fvalue )
+            perror( "-f option has no effect when not in subscriber mode." );
 
-    if ( eflag != 1 ) {
-        perror(
-            "expression not defined! please specify query via the -e flag" );
-        exit( -1 );
     }
 
-    //client mode
-    if ( hflag == 1 && pflag == 1 && serverflag == 0 ) {
-        port = atoi( pvalue );
-        if ( port == 0 ) {
-            perror( "port not defined!" );
-            exit( -1 );
+    //server mode checks
+    if ( serverflag )
+    {
+        if ( data_fvalue )
+        {
+            if ( strlen( data_fvalue ) > 255 ) {
+                perror( "Data filename argument length is too long! Maximum Linux file "
+                    "name length is 255 characters!" );
+                exit( -1 );
+            }
+        }
+        if ( ovalue )
+        {
+            startingPort = strtol( ovalue, NULL, 10 );
+            if ( ( errno == ERANGE && ( startingPort == LONG_MAX || startingPort == LONG_MIN ) )
+                    || ( errno != 0 && startingPort == 0 ) )
+            {
+                perror( "Invalid Server port number" );
+                return -1;
+            }
         }
     }
+    else
+    {
+        if ( data_fvalue )
+            perror( "-d option has no effect when not in server mode." );
+        if ( ovalue )
+            perror( "-o option has no effect when not in server mode." );
+    }
 
-    //dual-mode: client-server
-    if ( hflag == 1 && pflag == 1 && serverflag == 1 ) {
-        port = atoi( pvalue );
-        if ( port == 0 ) {
-            perror( "port not defined!" );
-            exit( -1 );
-        }
-    }
-    //if hostname is specified but port is not
-    if ( hflag == 1 && pflag == 0 ) {
-        perror( "port not defined!" );
-        exit( -1 );
-    }
+
 
     // Test libxml2 version is compatible
     LIBXML_TEST_VERSION
@@ -194,60 +211,38 @@ int main( int argc, char *argv[] ) {
             "Logging is not turned on - writing to /dev/null for this session of TeleScope:\n" );
     }
 
-    if ( port != 0 ) {
-        hp = gethostbyname( hvalue );
-
-        if ( !hp ) {
-            fprintf( stderr, "unknown host: %s\n", hvalue );
-            exit( 1 );
-        } else returnip( hp, ip );
-    }
-
-    print_service_ports(); /* Mon May 26 17:15:55 MDT 2014 */
-
-    if ( serverflag == 1 ) {
-        fprintf( stdout,
-            "Becoming a daemon since server mode of operation is specified. Bye!\n" );
-        //daemon( 0, 0 ); //using C library facility to simplify daemon things for now...
-    }
-
-    InitializeParseEngine( evalue );
     setSignals();
 
-    setupConnectionManager();
-
-    if ( hflag == 1 && pflag == 1 ) //if operating in the subscriber mode
+    //server mode...
+    if ( serverflag == 1 )
     {
-        establishPeerConnection( hp, ip, port );
-    }
+        print_service_ports();
+        fprintf( stdout, "Becoming a daemon since server mode of operation is "
+                         "specified. Bye!\n" );
+        //daemon( 0, 0 ); //using C library facility to simplify daemon things for now...
 
-    //if operating in server mode - do server stuff...
-    if ( serverflag == 1 ) {
-        setupServer( );
 
         launchStatusThread();
-
         launchCLIThread( );
-
-        if ( dataflag == 1 ) launchFileReaderThread( data_fvalue );
-
-        prepareServerSocket();
         launchClientsThreadPool();
-    } //server mode case end
-
-    //if operating in the subscriber mode
-    if ( hflag == 1 && pflag == 1 ) {
-
-        /* the main loop starts    */
-        processStream_static_buffer( fvalue );
-        //Never reached unless interrupted by a TERM signal....
-        //terminate_( 0 );
+        if ( data_fvalue ) launchFileReaderThread( data_fvalue );
     }
 
-    while ( terminateFlag != 1 )
-        ; //if operating in the publisher mode
+    //subscriber mode
+    if ( subFlag )
+    {
 
-    //Never reached unless interrupted by a TERM signal....
+        InitializeParseEngine( evalue );
+        launchSubscriberThread( hvalue, pvalue, fvalue );
+    }
+
+    // keep main thread watching terminate flag since the subscriber thread can
+    // block in recv function, and sd command from cli will not shut down telescope
+    while ( terminateFlag != 1 )
+        // Wait 1ms to prevent 100% CPU utilization.
+        usleep(1000);
+
+    //Never reached until server is shutdown or interrupted by a TERM signal....
     terminate_( 0 );
 
     return 0;

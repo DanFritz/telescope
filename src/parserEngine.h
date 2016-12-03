@@ -31,11 +31,11 @@
 //initialize the parsing engine globals
 int InitializeParseEngine( char *ev );
 
-///magic function - analyses the xml object and writes the matched object to file
-int analyze( char *filename, xmlNode *root_element, char * buf );
+//!magic function - analyses the xml object and writes the matched object to file
+int analyze( const char *filename, xmlNode *root_element, char * buf );
 
-///the same as analyze but without writing to a file
-///used in complex expression handling
+//!the same as analyze but without writing to a file
+//!used in complex expression handling
 int analyse( xmlNode *root_element );
 //int analyze2 (char *filename, xmlNode *root_element, QueueWriter writer, HashEntry item, HashTable table);
 

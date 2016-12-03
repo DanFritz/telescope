@@ -64,7 +64,8 @@ void *fileReader( void *threadid )
 
     while ( terminateFlag == 0 )
     {   //outer loop starts
-        readDataFile( fd );
+        if ( -2 == readDataFile( fd ) )
+            break;
     }
     free( readbuffer );
     fclose( fd );
@@ -78,14 +79,14 @@ int readDataFile( FILE * fd )
 
     if ( getline( &readbuffer, &maxReadSize, fd ) < 0 )
     {
-        perror( "Reached end of data file" );
-        return ( -1 );
+        logMessage( stderr, "Reached end of data file\n" );
+        return ( -2 );
     }
 
     //check for valid input
     if ( strncmp( (char*)msg_start, readbuffer, start_len_pos ) != 0 )
     {
-        perror( "Invalid start of xml message" );
+        logMessage( stderr, "Invalid start of xml message\n" );
         return -1;
     }
     trim( readbuffer );
@@ -94,7 +95,7 @@ int readDataFile( FILE * fd )
     if ( ( errno == ERANGE && ( mesg_len == LONG_MAX || mesg_len == LONG_MIN ) )
             || ( errno != 0 && mesg_len == 0 ) || mesg_len != strlen( readbuffer ) )
     {
-        perror( "Invalid message length" );
+        logMessage( stderr, "Invalid message length\n" );
         return -1;
     }
 

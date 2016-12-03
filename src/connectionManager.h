@@ -27,34 +27,46 @@
 
 #define TOPOLOGY_CNF "topology.cnf"
 
-/// @brief Read topology.cnf file to initialize the broker list
-void setupConnectionManager();
+//! Initialize the broker list.
 
-/// @brief free memory allocated by the broker list
+//! Sets up the first broker from the command line with priority of 100, and
+//! reads topology.cnf if it exists to the rest of the broker list.
+//! @param host command line host name
+//! @param port command line port number
+void setupBrokerList( const char * host, const char * port );
+
+//! @brief free memory allocated by the broker list
 void deleteConnectionManager();
 
-/// @brief Add new broker to the list
-/// @arg buffer - string in the form "ip; port; name; priority"
-/// @return 1 on success 0 on fail
+//! @brief Add new broker to the list
+//! @param buffer string in the form "ip; port; name; priority"
+//! @return 1 on success 0 on fail
 int addBroker( char * buffer );
 
-/// @brief Remove new broker from the list
-/// @arg buffer - name of the broker to remove
-/// @return 1 on success 0 on fail
+//! @brief Remove new broker from the list
+//! @param buffer name of the broker to remove
+//! @return 1 on success 0 on fail
 int removeBroker( char * buffer );
 
-/// @brief Remove new broker from the list
-/// @arg buffer - string in the form "name; priority"
-/// @return 1 on success 0 on fail
+//! @brief Remove new broker from the list
+//! @param buffer string in the form "name; priority"
+//! @return 1 on success 0 on fail
 int changeBrokerPriority( char * buffer );
 
-/// @brief print the broker map to a socket
-/// @arg sock - socket file descriptor
+//! @brief print the broker map to a socket
+//! @arg sock - socket file descriptor
 void showBrokerMap( int sock );
 
+//! @brief print the current broker map to a socket
+//! @arg sock - socket file descriptor
+void showCurrentBroker( int sock );
 
-/// @brief Updates value of sock with a connection to the next broker on the broker list.
-/// @arg sock - address of socket file descriptor to update.
+//! @brief print information on past broker failures to a socket
+//! @arg sock - socket file descriptor
+void showFaultHistory( int sock );
+
+//! @brief Updates value of sock with a connection to the next broker on the broker list.
+//! @param sock address of socket file descriptor to update.
 void connectToNextBroker( int * sock );
 
 #endif

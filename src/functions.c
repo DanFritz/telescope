@@ -40,6 +40,7 @@ struct sigaction term_handler; //signal handler for TERM like signals
 pthread_mutex_t terminateLock;
 pthread_mutex_t threadIDLock;
 
+pthread_t subscriberThread;
 pthread_t *tidR;
 pthread_attr_t attr;
 
@@ -61,10 +62,24 @@ int start_len_pos = 22;
 const xmlChar client_intro[] =
         "<xml><XML_MESSAGE length=\"00000128\" version=\"0.2\" xmlns=\"urn:ietf:params:xml:ns:xfb-0.2\" type_value=\"0\" type=\"MESSAGE\"></XML_MESSAGE>";
 
+int logging_sock = 0;
+
 // This is not declared in the function to keep it off the stack since maximum
 // stack size is usually much less than 16MB
 char buf[MAX_LINE * MAX_LINE];
-//REG_EXP
+char filename[MIN_LINE];
+
+void setupServer( void );
+int prepareServerSocket( void );
+void *Reader( void *param );
+
+int receive_xml_static_buffer( const char *filename );
+void *processStream_static_buffer( void * voidptr_filename );
+
+//save the peer address from the incoming client connection
+int getPeerAddress( const struct sockaddr *addr, char *ip );
+int update_threadIDCounter( void );
+int get_threadIDCounter( void );
 
 void setTerminateFlag( int sigtype )
 {
@@ -126,7 +141,7 @@ int returnip( struct hostent *hp, char * ipptr )
     return 0;
 }
 
-int receive_xml_static_buffer( char *filename )
+int receive_xml_static_buffer( const char *filename )
 {
     xmlDoc *doc = NULL;
     xmlNode *root_element = NULL;
@@ -137,8 +152,6 @@ int receive_xml_static_buffer( char *filename )
     {
         if ( rcv < 0 )
         {
-            logMessage( stdout, "Bad socket connection. Attempting to open new connection.\n" );
-            connectToNextBroker( &peer_sock );
             return -1;
         }
         else if ( rcv == 0 )
@@ -236,51 +249,19 @@ int getPeerAddress( const struct sockaddr *addr, char *ip )
     return 0;
 }
 
-int establishPeerConnection( struct hostent * hp, char * ipptr, int port )
+int launchSubscriberThread( const char * host, const char * port, const char * file )
 {
-    printf("ipptr %s\n", ipptr);
-    int v = 1;
-    //build address data structure
-    peer_sin.sin_family = AF_INET;
-    /* convert port number to network byte order */
-    if ( port != 0 )
-        peer_sin.sin_port = htons( port );
-    else peer_sin.sin_port = htons( startingPort + SERVER_PORT );
-    /* convert IP address in ASCII strings to network byte order binary value */
-    inet_pton( AF_INET, ipptr, &peer_sin.sin_addr.s_addr );
+    setupBrokerList( host, port );
 
-    /*zero the rest of the struct*/
-    // memset(&peer_sin.sin_zero, '\0', sizeof(&peer_sin.sin_zero)); /* Wed May 21 11:33:42 PDT 2014 */
-    /* suppress the [-Wsizeof-pointer-memaccess] error in gcc 4.8+ by dereferencing a value */
-    memset( &peer_sin.sin_zero, '\0', sizeof( *peer_sin.sin_zero ) ); /* Wed May 21 11:33:42 PDT 2014 */
+    connectToNextBroker( &peer_sock );
 
-    memcpy( &hp->h_addr, &peer_sin.sin_addr, sizeof(&hp->h_length));
+    strncpy(filename, file, MIN_LINE);
 
-    //create TCP socket to the peer
-
-    if ( ( peer_sock = socket( PF_INET, SOCK_STREAM, 0 ) ) < 0 )
+    if ( pthread_create( &subscriberThread, NULL, processStream_static_buffer, (void *)filename )
+            != 0 )
     {
-        perror( "can't open a peer socket!" );
-        exit( 1 );
-    }
-
-    len = sizeof( peer_sin );
-
-    //lets reuse the socket!
-    setsockopt( peer_sock, SOL_SOCKET, SO_REUSEADDR, &v, sizeof( v ) );
-
-    //connect to the peer/(server)
-    if ( connect( peer_sock, (struct sockaddr*)&peer_sin, sizeof( peer_sin ) )
-            < 0 )
-    {
-        perror( "can't connect to the XML data stream publisher!\n" );
-        close( peer_sock );
-        exit( 1 );
-    }
-    else
-    {
-        fprintf( stdout, "connected to the XML data stream publisher.\n" );
-        fprintf( logfile, "connected to the XML data stream publisher.\n" );
+        perror( "failed to create subscriber Thread!" );
+        exit( -1 );
     }
     return 0;
 }
@@ -327,6 +308,11 @@ int prepareServerSocket( void )
 void launchClientsThreadPool( void )
 {
     int tindex;
+
+    setupServer( );
+
+    prepareServerSocket();
+
     // Get the default attributes
     pthread_attr_init( &attr );
     //pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);//does not really help
@@ -341,8 +327,7 @@ void launchClientsThreadPool( void )
     /* the last argument to pthread_create must be passed by reference as a pointer cast of type void. NULL may be used if no argument is to be passed. */
     for ( tindex = 0; tindex < R_NUM; tindex++ )
     {
-        if ( pthread_create( &tidR[tindex], &attr, Reader,
-            (void *)&server_sock ) != 0 )
+        if ( pthread_create( &tidR[tindex], &attr, Reader, (void *)&server_sock ) != 0 )
         {
             perror( "failed to create a client handling Reader thread!" );
             free( tidR );
@@ -410,7 +395,7 @@ void *Reader( void *threadid )
         else
         {
             getPeerAddress( (struct sockaddr *)&clientName, ipstring );
-            fprintf( stdout, "Reader: Accepting incoming client from IP: %s\n",
+            logMessage( stdout, "Reader: Accepting incoming client from IP: %s\n",
                 ipstring );
             //updateClientsTable(XMLQ, ipstring);
             updateQueueTableClientsTable( QT, ipstring, 1 );
@@ -423,6 +408,8 @@ void *Reader( void *threadid )
         {
             if ( isQueueEmpty( XMLQ ) == true )
             {
+                // Wait 1ms to prevent 100% CPU utilization.
+                usleep(1000);
                 continue;
             }
             else
@@ -602,13 +589,15 @@ void terminate_( int sigtype )
     exit( 0 );
 }
 
-void processStream_static_buffer( char * filename )
+void *processStream_static_buffer( void * voidptr_filename )
 {
+    char * file = (char *)voidptr_filename;
 
     while ( terminateFlag != 1 )
     {
-        receive_xml_static_buffer( filename );
+        receive_xml_static_buffer( file );
     }      //end of main loop
+    pthread_exit( (void *)1 );
 }
 
 void print_service_ports( void ) /* Mon May 26 17:15:55 MDT 2014 */
@@ -664,12 +653,20 @@ QueueTable getQueueTable()
     return  QT;
 }
 
+void showUptime( int sock )
+{
+    // TODO implement
+}
 void logMessage( FILE *stream, const char *format, ... )
 {
+    char buffer[MAX_LINE];
+
     va_list args;
     va_start(args, format);
-    vfprintf( stream, format, args );
-    vfprintf( logfile, format, args );
+    vsnprintf( buffer, MAX_LINE, format, args );
     va_end( args );
-
+    fprintf( stream, buffer );
+    fprintf( logfile, buffer );
+    if ( logging_sock )
+        write( logging_sock, buffer, strlen(buffer) );
 }
