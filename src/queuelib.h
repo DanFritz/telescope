@@ -12,36 +12,16 @@
 #ifndef QUEUELIB_H
 #define	QUEUELIB_H
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <limits.h>
-#include <math.h>
-#include <string.h>
-#include <stdbool.h>
-#include <netinet/in.h>
-
-#include <sys/types.h>
-
-#include <pthread.h>
+#include "globals.h"
 
 #define QUEUE_MAX_ITEMS 1000
-#define R_NUM 128
+#define R_NUM 256
 
 //keeps track of connecting clients
 struct clients {
         char ip[256][256];
         int refcount;
-        int size;
 };
-
-/* Entries that are stored in the queue 
- * -------------------------------------------------------------------------------------*/
-typedef struct QueueEntryStruct {
-        // a reference count    
-        int count;
-        // a pointer to the actual message buffer
-        void *messageBuf;
-} QueueEntry;
 
 /*----------------------------------------------------------------------------------------
  * Queue Structure Definition
@@ -49,22 +29,14 @@ typedef struct QueueEntryStruct {
 struct QueueStruct {
         // locking for multithreaded environment
         pthread_mutex_t queueLock;
-        pthread_cond_t queueCond;
 
         //   the queue data
         // the index of oldest item
-        long head;
+        int head;
         // the index of next available slot
-        long tail;
-        int count;
+        int tail;
         // an array of messages that are stored in the queue
-        QueueEntry items[QUEUE_MAX_ITEMS];
-        // the data copy function for items in this queue
-        void (*copy)( void **copy, void *original );
-        int (*sizeOf)( void *msg );
-        // the sizeof function for items in this queue
-        struct clients clients_tbl;
-
+        char * items[QUEUE_MAX_ITEMS];
 };
 
 typedef struct QueueStruct *Queue;
@@ -82,8 +54,8 @@ Queue createQueue( void );
 void destroyQueue( Queue q );
 void clearQueue( Queue q );
 bool isQueueEmpty( Queue q );
-int writeQueue( Queue q, void *item );
-int readQueue( Queue q, void **item );
+int writeQueue( Queue q, char *item );
+int readQueue( Queue q, char **item );
 int sizeQueue( Queue q );
 long getItemsUsed( Queue q );
 int getItemsTotal( Queue q );
@@ -96,8 +68,9 @@ int getRefcount( Queue q );
 int getQueueTableRefcount( QueueTable qt );
 int getClientAddress( Queue q, int index, char * buff );
 int getQueueTableClientAddress( QueueTable qt, int index, char * buff );
-int writeQueueTable( QueueTable qt, void * item );
+int writeQueueTable( QueueTable qt, char * item );
 
+QueueTable getQueueTable();
 
 
 #endif

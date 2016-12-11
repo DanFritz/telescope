@@ -25,7 +25,6 @@
 volatile sig_atomic_t terminateFlag = 0;
 static int threadIDCounter = 0; //counter to keep track of Reader's ID
 
-QueueTable QT = NULL; //consolidated data structure
 
 //socket stuff
 
@@ -78,7 +77,6 @@ void *processStream_static_buffer( void * voidptr_filename );
 
 //save the peer address from the incoming client connection
 int getPeerAddress( const struct sockaddr *addr, char *ip );
-int update_threadIDCounter( void );
 int get_threadIDCounter( void );
 
 void setTerminateFlag( int sigtype )
@@ -124,20 +122,6 @@ int setSignals( void )
         perror( "sigaction() failed for SIGQUIT!" );
     //block signals in threads
     //pthread_sigmask ( SIG_BLOCK, &term_handler.sa_mask, NULL );
-    return 0;
-}
-
-int returnip( struct hostent *hp, char * ipptr )
-{
-
-    char str[INET_ADDRSTRLEN];
-    char **pptr = hp->h_addr_list;
-
-    for ( ; *pptr != NULL; pptr++ )
-
-    {
-        sprintf( ipptr, inet_ntop( AF_INET, *pptr, str, sizeof( str ) ) );
-    }
     return 0;
 }
 
@@ -350,7 +334,7 @@ void *Reader( void *threadid )
 {
     int lsock, sock;
     lsock = *( (long*)threadid );
-    u_char *xmlR = NULL;
+    char *xmlR = NULL;
     char ipstring[256];
     struct sockaddr_in clientName = { 0 };
     socklen_t clientNameLen = sizeof( clientName );
@@ -358,19 +342,14 @@ void *Reader( void *threadid )
     int myID;
     Queue XMLQ = NULL;
 
-    xmlDoc *doc = NULL; /* Wed Jun 11 12:02:33 PDT 2014 */
-
-    int i, j;
     char filter[8];
     char refilter[9];
-    int msg_len;
 
     // detach the thread so the resources may be returned when the thread exits
     pthread_detach( pthread_self() );
 
     myID = get_threadIDCounter(); /* obtain the ID of the queue to read from by brute force */
-    update_threadIDCounter();
-    XMLQ = QT->qtable[myID];
+    XMLQ = getQueueTable()->qtable[myID];
     //XMLQ = XMLQS[myID];
 
     memset( ipstring, '\0', sizeof( ipstring ) );
@@ -383,10 +362,7 @@ void *Reader( void *threadid )
 
     while ( terminateFlag == 0 )
     {            //outer loop starts
-        //if ((sock = accept(lsock, (struct sockaddr *)&server_sin, &len)) < 0 )
-        //if ((sock = accept(lsock, NULL, NULL)) < 0 ) //might be a better alternative - gives less cases of detach failures
-        if ( ( sock = accept( lsock, (struct sockaddr *)&clientName,
-            &clientNameLen ) ) < 0 )
+        if ( ( sock = accept( lsock, (struct sockaddr *)&clientName, &clientNameLen ) ) < 0 )
         { //need this version to get info about subscriber's IP
             perror( "Reader: can't accept on a socket!" );
             close( sock );
@@ -398,7 +374,7 @@ void *Reader( void *threadid )
             logMessage( stdout, "Reader: Accepting incoming client from IP: %s\n",
                 ipstring );
             //updateClientsTable(XMLQ, ipstring);
-            updateQueueTableClientsTable( QT, ipstring, 1 );
+            updateQueueTableClientsTable( getQueueTable(), ipstring, 1 );
 
             //write introductory bgp message with <xml> tag to order the reading correctly in the client
             write( sock, client_intro, strlen( (char *)client_intro ) );
@@ -416,91 +392,34 @@ void *Reader( void *threadid )
             {
                 // Sleep for 1 micro second
                 nanosleep( &sleeptime, NULL );
-                readQueue( XMLQ, (void **)&xmlR );
+                readQueue( XMLQ, &xmlR );
 
                 if ( xmlR == NULL )
                     continue;
 
-                size_t xlen = xmlStrlen( (void *)xmlR );
+                size_t xlen = strlen( xmlR );
 
-                if ( xlen > 2 ) //if xmlR is an actual full BGP message........
+                if ( ( write( sock, xmlR, xlen ) == -1 ) )
                 {
-                    //extract the real length
-                    // for (i=21, j=0; i<xlen, j < 8; i++, j++)  /* Wed May 21 11:16:27 PDT 2014 */
-
-                    /* avoid left-hand operand of comma expression has no effect [-Wunused-value] in gcc 4.8+ */
-                    for ( i = 21, j = 0; j < 8; i++, j++ )
-                    { /* Wed May 21 11:16:27 PDT 2014 */
-
-                        filter[j] = xmlR[i];
-                    }
-                    strncpy( refilter, filter, 7 );
-                    refilter[7] = filter[7];
-                    refilter[8] = 'x'; //lets put a guard against accidental 0 in the string that might make a length value 10 times bigger...
-
-                    msg_len = atoi( refilter );
-
-                    if ( msg_len >= MAX_LINE * MAX_LINE ) /* skip message larger then a predefined size:  Wed Jun 11 12:02:33 PDT 2014 */
-                    {
-                        fprintf( stderr,
-                            "Reader(): Message is too big! Skipping.\n" );
-                        continue;
-                    }
-
-                    fprintf( logfile,
-                        "Reader: sending the full XML entry from the Queue\n" );
-
-                    doc = xmlParseMemory( (char *)xmlR, msg_len ); /* a cleaner way to parse: Wed Jun 11 12:02:33 PDT 2014 */
-
-                    if ( doc == NULL )
-                    { /* Wed Jun 11 12:02:33 PDT 2014 */
-                        logMessage( stderr,
-                            "Reader(): Failed to parse document!\n" );
-                        continue;
-                    }
-                    else
-                    {
-                        xmlFreeDoc( doc );
-                        doc = NULL;
-                    }
-
-                    //if (write(sock, xmlR, msg_len) != msg_len)//we send just the exact message length to avoid junk after that
-                    //if (send(sock, xmlR, msg_len, 0) != msg_len)////we send just the exact message length to avoid junk after that
-                    if ( ( write( sock, xmlR, msg_len ) == -1 ) )
-                    {
-                        logMessage( logfile,
+                    logMessage( logfile,
                             "Reader: client closed the connection\n" );
-                        memset( refilter, '\0', sizeof( refilter ) );
-                        xmlR = NULL;
-                        break; //break out of the inner while loop
-                    }
-                    else
-                    {
-                        memset( refilter, '\0', sizeof( refilter ) );
-                        xmlR = NULL;
-                    }
+                    break; //break out of the inner while loop
                 }
-                else
-                { //if xmlR is NOT an actual full BGP message........
-                    memset( refilter, '\0', sizeof( refilter ) );
-                    xmlR = NULL;
-                }
+                free(xmlR);
 
             } //end of else when queue is not empty
         } //end of inner while loop
         fprintf( logfile, "Reader: exited the inner while loop!\n" );
-        updateQueueTableClientsTable( QT, ipstring, 2 );
+        updateQueueTableClientsTable( getQueueTable(), ipstring, 2 );
         close( sock );
     } //end of outer while loop
-
-    //update_terminateCounter();
 
     pthread_exit( (void *)1 );
 } //end of Reader
 
 void setupServer( void )
 {
-    QT = createQueueTable();
+    createQueueTable();
     if ( pthread_mutex_init( &threadIDLock, NULL ) )
     {
         perror( "unable to init mutex ID lock" );
@@ -508,48 +427,35 @@ void setupServer( void )
     }
 }
 
-int update_threadIDCounter( void )
+void lockMutex( pthread_mutex_t * m )
 {
-    // int swap = 0; /* intermediary variable Wed May 21 11:16:27 PDT 2014 */
-
-    if ( pthread_mutex_lock( &threadIDLock ) )
+    if ( pthread_mutex_lock( m ) )
     {
-        perror( "lockCounter: failed" );
+        perror( "Unable to lock pthread_mutex_t" );
         exit( 1 );
     }
-
-    // threadIDCounter = threadIDCounter++; /* Wed May 21 11:16:27 PDT 2014 */
-
-    /* use swap variable to avoid undefined operation  Wed May 21 11:16:27 PDT 2014 */
-    // swap = threadIDCounter++; /* Wed May 21 11:16:27 PDT 2014 */
-    // threadIDCounter = swap; /* Wed May 21 11:16:27 PDT 2014 */
-    threadIDCounter++; //JUST update the counter /* Thu May 22 15:36:29 PDT 2014 */
-
-    if ( pthread_mutex_unlock( &threadIDLock ) )
-    {
-        perror( "unlockCounter: failed" );
-        exit( 1 );
-    }
-    return threadIDCounter;
 }
+
+void unlockMutex( pthread_mutex_t * m )
+{
+    if ( pthread_mutex_unlock( m ) )
+    {
+        perror( "Unable to unlock pthread_mutex_t" );
+        exit( 1 );
+    }
+}
+
 
 int get_threadIDCounter( void )
 {
     int t = 0;
 
-    if ( pthread_mutex_lock( &threadIDLock ) )
-    {
-        perror( "lockCounter: failed" );
-        exit( 1 );
-    }
+    lockMutex( &threadIDLock );
 
     t = threadIDCounter;
+    threadIDCounter++; //JUST update the counter /* Thu May 22 15:36:29 PDT 2014 */
 
-    if ( pthread_mutex_unlock( &threadIDLock ) )
-    {
-        perror( "unlockCounter: failed" );
-        exit( 1 );
-    }
+    unlockMutex( &threadIDLock );
     return t;
 }
 
@@ -572,9 +478,8 @@ void terminate_( int sigtype )
     {
         pthread_attr_destroy( &attr );
         free( tidR );                //free the client serving thread pool
-        destroyQueueTable( QT );
-        free( QT );
-        QT = NULL;
+        destroyQueueTable( getQueueTable() );
+        free( getQueueTable() );
     }
 
     xmlCleanupParser(); //Free the global libxml variables
@@ -648,11 +553,6 @@ void incMatchingMessages()
     MatchingMessages++;
 }
 
-QueueTable getQueueTable()
-{
-    return  QT;
-}
-
 void showUptime( int sock )
 {
     // TODO implement
@@ -665,8 +565,8 @@ void logMessage( FILE *stream, const char *format, ... )
     va_start(args, format);
     vsnprintf( buffer, MAX_LINE, format, args );
     va_end( args );
-    fprintf( stream, buffer );
-    fprintf( logfile, buffer );
+    fprintf( stream, "%s", buffer );
+    fprintf( logfile, "%s", buffer );
     if ( logging_sock )
         write( logging_sock, buffer, strlen(buffer) );
 }

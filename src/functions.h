@@ -41,10 +41,17 @@ int launchSubscriberThread( const char * host, const char * port, const char * f
 
 void launchClientsThreadPool( void );
 
+void lockMutex( pthread_mutex_t * m );
+
+void unlockMutex( pthread_mutex_t * m );
+
 int setSignals( void );
 
 void print_service_ports( void );
 
+void lockMutex( pthread_mutex_t * m );
+
+void unlockMutex( pthread_mutex_t * m );
 //! @brief Remove extra white space before and after str
 //! @return 0 on success
 int trim( char *str );
@@ -55,7 +62,6 @@ long long int getMatchingMessages();
 
 void incMatchingMessages();
 
-QueueTable getQueueTable();
 
 //! @brief report duration telescope has been running
 //! @param sock socket to write output to.

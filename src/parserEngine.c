@@ -217,7 +217,7 @@ int tuple_populate( char *tuple_str )
     int ic = 0;
     while ( tuple_str != NULL )
     {
-        sprintf( tuple[ic++], tuple_str );
+        sprintf( tuple[ic++], "%s", tuple_str );
         tuple_str = strtok( NULL, " " );
     }
     return 0;
@@ -741,7 +741,7 @@ int get_prefix(xmlNode * a_node, char *element_name, char operator, char *value)
     int xox = -1;
     int zoz = -1;
 
-    xmlChar buf[2*512];
+    char buf[2*512];
     char str[2*512];
     char ip[INET_ADDRSTRLEN];
     char cidr[INET_ADDRSTRLEN];
@@ -830,10 +830,10 @@ int get_prefix(xmlNode * a_node, char *element_name, char operator, char *value)
                 if (xmlStrEqual(cur_node->name, (xmlChar *) "text" ) == 1 && xmlStrlen(cur_node->content) <= INET6_ADDRSTRLEN )
                 {
                     fprintf(logfile, "get_prefix:search () node content: %s\n", cur_node->content);
-                    xmlStrPrintf(buf, xmlStrlen(cur_node->content)+1, (char*)cur_node->content);
+                    snprintf(buf, xmlStrlen(cur_node->content)+1, "%s", cur_node->content);
                     //fprintf(logfile, "xml  buffer is:  %s\n", buf);
 
-                    strcpy (str, (char *) buf);
+                    strcpy (str, buf);
                     fprintf(logfile, "get_prefix:char str is: %s\n", str);
 
                     for (z=0; z < strlen (str); z++)
@@ -1254,7 +1254,7 @@ int analyze( const char *filename, xmlNode *root_element, char * buf )
                         fprintf( logfile,
                             "Writer: putting the message into the Queue\n" );
                         //writeQueues((void *)data_ptr->out);
-                        writeQueueTable( getQueueTable(), (void *)buf );
+                        writeQueueTable( getQueueTable(), buf );
                     }
                     else
                     {
@@ -1429,7 +1429,7 @@ int analyze( const char *filename, xmlNode *root_element, char * buf )
                         fprintf( logfile,
                             "Writer: putting the message into the Queue\n" );
                         //writeQueues((void *)data_ptr->out);
-                        writeQueueTable( getQueueTable(), (void *)buf );
+                        writeQueueTable( getQueueTable(), buf );
                     }
                     else
                     {

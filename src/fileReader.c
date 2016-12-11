@@ -103,7 +103,7 @@ int readDataFile( FILE * fd )
     doc = xmlParseMemory( readbuffer, mesg_len ); //changed size to msg_len instead of size_of(): Thu Jun 19 14:53:13 MDT 2014
 
     if ( doc != NULL )
-        writeQueueTable( getQueueTable(), (void *)readbuffer );
+        writeQueueTable( getQueueTable(), readbuffer );
 
     // Cleanup
     xmlFreeDoc( doc );

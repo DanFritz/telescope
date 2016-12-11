@@ -41,6 +41,7 @@
 #include <fcntl.h>
 #include <regex.h>
 #include <signal.h>
+#include <math.h>
 #include <sys/stat.h>
 
 #include <libxml/parser.h>
