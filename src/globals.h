@@ -80,6 +80,7 @@ extern volatile sig_atomic_t terminateFlag;
 
 extern int serverflag;
 extern long startingPort;
+extern time_t serverStartTime;
 
 FILE * logfile;
 

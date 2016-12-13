@@ -38,6 +38,10 @@ int addBrokerImpl( char * buffer, int source );
 void sortBrokers();
 void readTopology();
 
+void addFaultRecord( const char * msg, struct Broker * b );
+char ** faultHistory = NULL;
+int faultCount = 0;
+
 void setupBrokerList( const char * hvalue, const char * port )
 {
     // If we have an existing broker list, delete it.
@@ -92,7 +96,16 @@ void readTopology()
 
 void deleteConnectionManager()
 {
+    int i;
+
     free( broker );
+
+    // free fault history
+    for ( i = 0; i < faultCount; i++ )
+    {
+        free( faultHistory[i] );
+    }
+    free( faultHistory );
 }
 
 int failBrokerAdd( const char * attribute, int source )
@@ -275,6 +288,7 @@ void showBrokerMap( int sock )
     for ( i = 0; i < numBrokers; i++ )
         printBroker( &broker[i], sock );
 }
+
 void showCurrentBroker( int sock )
 {
     if ( currentBroker < numBrokers )
@@ -301,6 +315,7 @@ int connectToBroker( struct Broker * b )
     s = getaddrinfo(broker[currentBroker].ip, broker[currentBroker].port, &hints, &result);
     if ( s != 0 )
     {
+        addFaultRecord( "Invalid host name", broker + currentBroker );
         logMessage( stderr, "%s is not a valid host name: %s\n", broker[currentBroker].ip, gai_strerror(s) );
         strncpy( broker[currentBroker].status, "Invalid host name", MIN_LINE);
         freeaddrinfo(result);
@@ -322,6 +337,7 @@ int connectToBroker( struct Broker * b )
 
     if ( rp == NULL )
     {
+        addFaultRecord( "Failed to connect to host", broker + currentBroker );
         logMessage( stderr, "Unable to connect to host %s\n", broker[currentBroker].ip );
         strncpy( broker[currentBroker].status, "Failed to connect", MIN_LINE);
         freeaddrinfo(result);
@@ -332,15 +348,32 @@ int connectToBroker( struct Broker * b )
     return sock;
 }
 
+void addFaultRecord( const char * msg, struct Broker * b )
+{
+    char tmp[MIN_LINE];
+    time_t currentTime = time(NULL);
+
+    faultHistory = realloc( faultHistory, sizeof( char * ) * ( faultCount + 1) );
+    snprintf( tmp, MIN_LINE, "%.24s : %s : %s\n", ctime(&currentTime), b->name, msg );
+    faultHistory[faultCount] = strdup( tmp );
+    faultCount++;
+}
+
 void showFaultHistory( int sock )
 {
-    // TODO implement
+    int i;
+    for ( i = 0; i < faultCount; i++ )
+        write( sock, faultHistory[i], strlen( faultHistory[i] ) );
 }
+
 void connectToNextBroker( int * sock )
 {
     *sock = -1;
     if ( currentBroker > 0 )
+    {
+        addFaultRecord( "Lost connection to host.", broker + currentBroker - 1 );
         strncpy( broker[currentBroker-1].status, "Disconnected", MIN_LINE);
+    }
     while ( *sock < 0 )
     {
         if ( currentBroker < numBrokers )

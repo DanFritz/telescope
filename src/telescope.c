@@ -26,6 +26,7 @@
 
 long startingPort = DEFAULT_STARTING_PORT;
 int serverflag = 0;
+time_t serverStartTime;
 
 int main( int argc, char *argv[] ) {
     int c, i; //dumb variables...
@@ -164,6 +165,7 @@ int main( int argc, char *argv[] ) {
     //server mode checks
     if ( serverflag )
     {
+        serverStartTime = time(NULL);
         if ( data_fvalue )
         {
             if ( strlen( data_fvalue ) > 255 ) {

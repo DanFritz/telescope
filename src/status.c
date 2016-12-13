@@ -158,6 +158,7 @@ void *StatusThread( void *threadid )
 
                 }
             }
+            showUptime(sock);
 
             write( sock, (char *)"STATUS DATA END:\n",
                 strlen( (char *)"STATUS DATA END:\n" ) );

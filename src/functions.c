@@ -555,8 +555,17 @@ void incMatchingMessages()
 
 void showUptime( int sock )
 {
-    // TODO implement
+    int uptime = difftime(time(NULL), serverStartTime) + 0.5;
+
+    int hours = uptime / 3600;
+    int minutes = ( uptime % 3600 ) / 60;
+    int seconds = uptime % 60;
+
+    char tmp[MAX_LINE];
+    snprintf(tmp, MAX_LINE, "Server uptime: %02d:%02d:%02d\n", hours, minutes, seconds );
+    write( sock, tmp, strlen( tmp ) );
 }
+
 void logMessage( FILE *stream, const char *format, ... )
 {
     char buffer[MAX_LINE];
