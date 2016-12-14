@@ -23,6 +23,7 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
+#define _GNU_SOURCE
 #include <unistd.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -57,6 +58,7 @@
 #include "parserEngine.h"
 #include "fileReader.h"
 #include "connectionManager.h"
+#include "passwordManager.h"
 
 #define MIN_LINE 256
 #define MAX_LINE 4096

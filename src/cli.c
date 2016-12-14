@@ -29,7 +29,6 @@ int prepareCLIThread( void );
 void *CLIThread( void *thread_info );
 
 const char * prompt = "$_: ";
-const char * passwordPrompt = "Enter Password: ";
 const char * newTransactionPrompt = "Enter new transaction: ";
 const char * addBrokerPrompt = "Enter new broker in the form \"ip; port; name; priority\"\n"
                                "(e.g. \"127.0.0.1; 50000; testServer; 1\"): ";
@@ -52,10 +51,8 @@ const char * helpMessage = "available commands are :\n"
                            "  show current broker (scb)\n"
                            "  show fault history (sfh)\n"
                            "  show uptime (su)\n"
-                           "  change password (su)\n"
+                           "  change password (cp)\n"
                            "  shutdown (sd)\n";
-
-void changePassword( int sock ) {} // TODO implement
 
 void launchCLIThread( )
 {
@@ -145,13 +142,7 @@ void *CLIThread( void *thread_info )
 
             memset( buffer, '\0', sizeof(buffer) );
 
-            write( sock, passwordPrompt, strlen( passwordPrompt ) );
-
-            if ( receivedInBuffer( buffer, sock, MAX_LINE ) <= 0 )
-                continue;
-            trim(buffer);
-
-            if ( strcmp( DEFAULT_ACCESS_PASSWORD, buffer ) == 0 )
+            if ( authenticateUser( sock ) )
             {
                 for ( ; terminateFlag == 0 ; )
                 {
@@ -234,7 +225,7 @@ void *CLIThread( void *thread_info )
                     else if ( strcmp( buffer, "su" ) == 0 )
                         showUptime( sock );
                     else if ( strcmp( buffer, "cp" ) == 0 )
-                        changePassword( sock );
+                        setNewPassword( sock );
                     else if ( buffer[0] == '\0' )
                         ; // Do nothing except write the prompt again on empty string
                     else

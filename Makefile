@@ -1,9 +1,7 @@
 EXEC      = telescope 
 CC = gcc
 CFLAGS = -Wall -fno-strict-aliasing -g -I/usr/include/libxml2  -DHAVE_CONFIG_H
-LDFLAGS = -lxml2 -lpthread -lm -lz
-
-
+LDFLAGS = -lxml2 -lpthread -lcrypt -lm -lz
 
 SOURCE := telescope.c \
           functions.c \
@@ -13,6 +11,7 @@ SOURCE := telescope.c \
           parserEngine.c \
           fileReader.c \
           connectionManager.c \
+          passwordManager.c \
 
 AR = @AR@
 ARFLAGS = @ARFLAGS@
@@ -45,9 +44,7 @@ OBJDIR = ./Obj
 OBJECTS  = $(foreach var,$(SOURCE),$(OBJDIR)/$(var:.c=.o))
 MAINEXEC  = $(BINDIR)/telescope
 
-.PHONY: directories
-
-all: directories $(EXEC)
+all: $(EXEC)
 
 $(EXEC): $(OBJECTS) 
 	$(CC) $(CFLAGS) $(OBJECTS)  $(LDFLAGS) -o $(MAINEXEC)
@@ -57,8 +54,6 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c
 clean:
 	rm -f $(EXEC) $(MAINEXEC) $(OBJECTS)  	
 
-directories:
-	mkdir -p Obj bin
 
 # build tests
 build-tests: .build-tests-post

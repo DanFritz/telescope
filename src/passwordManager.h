@@ -20,13 +20,14 @@
  Winter's Tale, Act 3, Scene 1. William Shakespeare
  */
 
-#ifndef CLI_H
-#define CLI_H
+#ifndef PASSWORDMANAGER_H
+#define PASSWORDMANAGER_H
 
 #include "globals.h"
 
-int receivedInBuffer( char * buffer, int sock, int readSize );
+extern char * pwFile;
 
-void launchCLIThread( );
+bool authenticateUser( int sock );
+void setNewPassword( int sock );
 
 #endif
