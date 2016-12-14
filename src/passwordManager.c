@@ -70,10 +70,6 @@ bool authenticateUser( int sock )
 
     bool retval = ( strcmp( result, readBuffer ) == 0 );
 
-    printf( "%s\n", readBuffer);
-    printf( "%s\n", result);
-    printf( "%d\n", retval );
-
     free( readBuffer );
 
     return retval;

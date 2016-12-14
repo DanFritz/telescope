@@ -44,10 +44,13 @@ int main( int argc, char *argv[] ) {
     char * hvalue = NULL;
 
     //check the command options using getopt:
-    while ( ( c = getopt( argc, argv, "sh:o:p:f:e:lud:" ) ) != -1 )
+    while ( ( c = getopt( argc, argv, "sh:o:p:f:e:lud:c:" ) ) != -1 )
     {
         switch ( c )
         {
+            case 'c':
+                pwFile = optarg;
+                break;
             case 'd':
                 data_fvalue = optarg;
                 break;
@@ -108,11 +111,12 @@ int main( int argc, char *argv[] ) {
         fprintf( stderr, "    -p - initial port number in subscriber mode\n" );
         fprintf( stderr, "    -f - filename to write the captured xml messages\n" );
         fprintf( stderr, "    -e - query expression to match in the xml stream\n" );
-        fprintf( stderr, "  Server Mode: %s -s [-d (datafile)] [-o port]\n", argv[0] );
+        fprintf( stderr, "  Server Mode: %s -s [-d (datafile)] [-o port] [-c pwfile]\n", argv[0] );
         fprintf( stderr, "    -s - turn on server mode\n" );
         fprintf( stderr, "    -l - turn logging on to file\n" );
         fprintf( stderr, "    -d - turn xml data file reading on (specify filename)\n" );
         fprintf( stderr, "    -o - outgoing connection port number\n" );
+        fprintf( stderr, "    -c - password file\n" );
         fprintf( stderr, "  Server/Subscriber Mode: %s (subscriber mode arguments) (server mode arguments)\n", argv[0] );
         return -1;
     }
