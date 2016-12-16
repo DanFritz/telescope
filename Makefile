@@ -44,7 +44,9 @@ OBJDIR = ./Obj
 OBJECTS  = $(foreach var,$(SOURCE),$(OBJDIR)/$(var:.c=.o))
 MAINEXEC  = $(BINDIR)/telescope
 
-all: $(EXEC)
+.PHONY: directories
+
+all: directories $(EXEC)
 
 $(EXEC): $(OBJECTS) 
 	$(CC) $(CFLAGS) $(OBJECTS)  $(LDFLAGS) -o $(MAINEXEC)
@@ -54,6 +56,8 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c
 clean:
 	rm -f $(EXEC) $(MAINEXEC) $(OBJECTS)  	
 
+directories:
+	mkdir -p Obj bin
 
 # build tests
 build-tests: .build-tests-post
