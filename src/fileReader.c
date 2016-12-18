@@ -54,7 +54,7 @@ void *fileReader( void *threadid )
 
     while ( terminateFlag == 0 )
     {   //outer loop starts
-        if ( ( fd = fopen( DATAfilename, "r" ) ) < 0 )
+        if ( ( fd = fopen( DATAfilename, "r" ) ) == NULL )
         {
             perror( "fopen failed." );
             exit( -1 );

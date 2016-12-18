@@ -230,7 +230,7 @@ int main( int argc, char *argv[] ) {
 
         launchStatusThread();
         launchCLIThread( );
-        launchClientsThreadPool();
+        launchServerThreadPool();
         if ( data_fvalue ) launchFileReaderThread( data_fvalue );
     }
 

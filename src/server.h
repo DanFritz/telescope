@@ -20,26 +20,11 @@
  Winter's Tale, Act 3, Scene 1. William Shakespeare
  */
 
-#ifndef PARSERENGINE_H
-#define PARSERENGINE_H
+#ifndef SERVER_H
+#define SERVER_H
 
 #include "globals.h"
 
-//initialize the parsing engine globals
-int InitializeParseEngine( char *ev );
-
-//!magic function - analyses the xml object and writes the matched object to file
-int analyze( const char *filename, xmlNode *root_element, char * buf );
-
-//!the same as analyze but without writing to a file
-//!used in complex expression handling
-int analyse( xmlNode *root_element );
-//int analyze2 (char *filename, xmlNode *root_element, QueueWriter writer, HashEntry item, HashTable table);
-
-char * getExpression();
-
-long long int getMatchingMessages();
-
-void incMatchingMessages();
+void launchServerThreadPool( void );
 
 #endif

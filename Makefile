@@ -12,6 +12,8 @@ SOURCE := telescope.c \
           fileReader.c \
           connectionManager.c \
           passwordManager.c \
+          server.c \
+          subscriber.c \
 
 AR = @AR@
 ARFLAGS = @ARFLAGS@

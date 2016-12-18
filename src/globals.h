@@ -23,7 +23,9 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
-#define _GNU_SOURCE
+#ifndef _GNU_SOURCE
+#  define _GNU_SOURCE
+#endif
 #include <unistd.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -59,6 +61,8 @@
 #include "fileReader.h"
 #include "connectionManager.h"
 #include "passwordManager.h"
+#include "server.h"
+#include "subscriber.h"
 
 #define MIN_LINE 256
 #define MAX_LINE 4096

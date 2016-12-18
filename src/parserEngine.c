@@ -52,12 +52,13 @@ int shuffle2( int exp_gn );
 int shuffle( int exp_gn );
 int harvest( char *exp, xmlNode *root_element );
 int clearExpGlobals( void );
-int resetMatch( void );
 
 //search flags for IP prefix search function
 int exactflag = 0;
 int moreflag = 0;
 int lessflag = 0;
+
+long long int MatchingMessages = 0;
 
 ///cycles through xml object and gets all the elements and their  digit or string values.
 int get_element(xmlNode * a_node, char *element_name, char operator, char *value);
@@ -124,7 +125,7 @@ int InitializeParseEngine( char *evalue )
 {
     int i, l, k;
 
-    resetMatch();        //02/17/13
+    MatchingMessages = 0;
 
     clearExpGlobals(); //05/10/12 clear the exp globals arrays
 
@@ -1450,3 +1451,15 @@ char * getExpression()
 {
     return Expression;
 }
+
+long long int getMatchingMessages()
+{
+    return MatchingMessages;
+}
+
+void incMatchingMessages()
+{
+    MatchingMessages++;
+}
+
+

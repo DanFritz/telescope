@@ -25,48 +25,41 @@
 
 #include "globals.h"
 
-extern const xmlChar msg_start[];
-extern int start_len_pos;
 extern int logging_sock;
 
-//
-//functions' declarations
-//
+//! @brief signal all threads to stop execution
+//! @param sigtype unused
 void setTerminateFlag( int sigtype );
 
 //! @brief termination signals handling functions to close TeleScope gracefully
+//! @param sigtype unused
 void terminate_( int sigtype );
 
-int launchSubscriberThread( const char * host, const char * port, const char * file );
-
-void launchClientsThreadPool( void );
-
+//! @brief Lock a mutex, and exit on failure
+//! @param m mutex to be locked
 void lockMutex( pthread_mutex_t * m );
 
+//! @brief Unlock a mutex, and exit on failure
+//! @param m mutex to be unlocked
 void unlockMutex( pthread_mutex_t * m );
 
+//! @brief If signal is received, set program to properly exit
 int setSignals( void );
 
+//! @brief Send port information to stdout
 void print_service_ports( void );
 
-void lockMutex( pthread_mutex_t * m );
-
-void unlockMutex( pthread_mutex_t * m );
 //! @brief Remove extra white space before and after str
 //! @return 0 on success
 int trim( char *str );
-
-long long int getTotalMessagesReceived();
-
-long long int getMatchingMessages();
-
-void incMatchingMessages();
-
 
 //! @brief report duration telescope has been running
 //! @param sock socket to write output to.
 void showUptime( int sock );
 
+//! @brief Send message to log file, as well as specified stream
+//! @param stream Additional destination for message. Usually stderr or stdout
+//! @param format printf style format string
 void logMessage( FILE *stream, const char *format, ... );
 
 #endif
