@@ -292,7 +292,7 @@ void showBrokerMap( int sock )
 void showCurrentBroker( int sock )
 {
     if ( currentBroker < numBrokers )
-        printBroker( &broker[currentBroker], sock );
+        printBroker( &broker[currentBroker-1], sock );
 }
 
 

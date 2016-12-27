@@ -22,1427 +22,586 @@
 
 #include "parserEngine.h"
 
-//parsing engine globals
-bool Global_AND = true;
-bool Global_OR;
-bool complex = false;
-int Exp_Global_Number;
-
 char Expression[MAX_LINE];
-
-//REG_EXP
-char reg_start[MIN_LINE];
-char regex[MIN_LINE];
-
-//arrays for holding parsed cmd search expressions
-char tuple[1024][INET_ADDRSTRLEN];
-char logic[MIN_LINE];
-char element[MIN_LINE][MIN_LINE];
-char operator[MIN_LINE];
-char value[MIN_LINE][MIN_LINE];
-char content[MIN_LINE];
-
-//parsing engine globals
-int truth[MIN_LINE];
-char plogic[MIN_LINE];
-char expression_Global[MIN_LINE][MAX_LINE];
-
-int tokenize( char *exp );
-int shuffle2( int exp_gn );
-int shuffle( int exp_gn );
-int harvest( char *exp, xmlNode *root_element );
-int clearExpGlobals( void );
-
-//search flags for IP prefix search function
-int exactflag = 0;
-int moreflag = 0;
-int lessflag = 0;
 
 long long int MatchingMessages = 0;
 
-///cycles through xml object and gets all the elements and their  digit or string values.
-int get_element(xmlNode * a_node, char *element_name, char operator, char *value);
+pthread_mutex_t updateExpLock;
 
-///cycles through xml object and gets all the attributes and their  digit or string values.
-int get_attribute(xmlNode * a_node, char *attribute_name, char operator, char *value);
+const char * opChars = "=><!&|(P";
 
-///checks whether the IP is within a specified IP range
-int ip_range( char *, char *, uint32_t pn, uint32_t cn );
 
-///cycles through xml object and gets all the PREFIX elements values.
-int get_prefix(xmlNode * a_node, char *element_name, char operator, char *value);
-
-///fills the expression arrays with data to drive the exp engine
-int fill( char * exp );
-
-/// @brief Access the number of logical expressions in the parser engine.
-/// @return Returns the number of logical expressions.
-int getNumLogicalExpressions();
-
-int clearExpGlobals( void )
+enum OP
 {
-    int i = 0;
+    EQUAL,
+    GREATER,
+    LESS,
+    NOT,
+    AND,
+    OR,
+    PAREN,
+    PRIMITIVE
+};
 
-    memset( Expression, '\0', sizeof( Expression ) );
+typedef struct EXP
+{
+        const char * expStr;
+        bool isValue;
+        xmlChar * expXmlStr;
+        double expStrValue;
+        bool isAttr;
+        int expStrLen;
 
-    memset( truth, '\0', sizeof( truth ) );
+        struct EXP * lhs;
+        enum OP op;
+        struct EXP * rhs;
+} Exp;
 
-    for ( i = 0; i < 256; i++ )
+//! @brief Root node of the parsed expression tree.
+Exp * root;
+
+int count = 0;
+void printExpImpl ( Exp * n )
+{
+    count++;
+    int a = count;
+    printf ("%d : %c : \"%.*s\"\n", a, *(opChars + n->op), n->expStrLen, n->expStr );
+    if ( n->lhs )
     {
-        truth[i] = 0;
+        printf (" %d LHS\n", a );
+        printExpImpl( n->lhs );
     }
-
-    memset( plogic, '\0', sizeof( plogic ) );
-
-    for ( i = 0; i < 256; i++ )
+    if ( n->rhs )
     {
-        plogic[i] = '\0';
+        printf (" %d RHS\n", a );
+        printExpImpl( n->rhs );
     }
-
-    for ( i = 0; i < 256; i++ )
-    {
-        memset( expression_Global[i], '\0', sizeof( expression_Global[i] ) );
-        strcpy( expression_Global[i], "" );
-    }
-
-    //clear the globals
-    for ( i = 0; i < 256; i++ )
-    {
-        memset( element[i], '\0', sizeof( element[i] ) );
-        operator[i] = '\0';
-        memset( value[i], '\0', sizeof( value[i] ) );
-        logic[i] = '\0';
-    }
-
-    for ( i = 0; i < 1024; i++ )
-    {
-        memset( tuple[i], '\0', sizeof( tuple[i] ) );
-    }
-    return 0;
 }
 
-int InitializeParseEngine( char *evalue )
+void printExp( Exp * n )
 {
-    int i, l, k;
+    count = 0;
+    printExpImpl(n);
+}
 
-    MatchingMessages = 0;
-
-    clearExpGlobals(); //05/10/12 clear the exp globals arrays
-
-    if ( strlen( evalue ) > MAX_LINE )/* 09/12/11 - added extra security check */
+//! @brief Allocate memory for an Exp
+Exp * newExp()
+{
+    Exp * retval;
+    if ( ( retval = (Exp *) malloc ( sizeof(Exp) ) ) == NULL )
     {
-        perror(
-            "FATAL: exp length is longer then 4096 characters! Avoiding buffer overrun!" );
-        exit( -1 );
+        logMessage( stderr, "Failed to allocate memory for Exp.\n");
+        exit(-1);
     }
+    memset( retval, '\0', sizeof(Exp) );
+    return retval;
+}
 
-    //fill the exp arrays with data
-    strcpy( Expression, evalue );
-    trim( Expression );
+int getParenthesisExp( const char ** exp, int expLen )
+{
+    char * matchedClose;
+    char * matchedOpen;
+    char * otherOpen;
 
-    //case: if exp contains ()
-    //fill the expg global arrays with data
-    if ( strrchr( Expression, '(' ) != NULL )
+    // Find first open parenthesis
+    matchedOpen = strchr( *exp, '(' );
+    if ( matchedOpen == NULL )
+        return -1;
+
+    // Find closing parenthesis ignoring embedded parenthesis
+    matchedClose = strchr( matchedOpen, ')' );
+    if ( matchedClose == NULL )
+        return -1;
+    otherOpen = strchr( matchedOpen + 1, '(' );
+    for(;;)
     {
-        complex = true;
-        fprintf( logfile, "COMPLEX expression!\n" );
+        if ( otherOpen == NULL || otherOpen > matchedClose )
+            break;
+        matchedClose = strchr( matchedClose + 1, ')' );
+        if ( matchedClose == NULL )
+            return -1;
+        otherOpen = strchr( otherOpen + 1, '(' );
     }
-    else
-    {        //05/09/12 reset to false
-        complex = false;
-        fprintf( logfile, "SIMPLE expression!\n" );
+    *exp = matchedOpen;
+    return matchedClose - matchedOpen + 1;
+}
+
+Exp * parseExpression( const char * exp, int expLen )
+{
+    bool notExists;
+    int newExpLen;
+    int j;
+    const char * op = exp + expLen, *tmp;
+    const char * i;
+    Exp * currentNode;
+    Exp * tmpNode;
+    enum OP opChar;
+
+    currentNode = newExp();
+    currentNode->expStr = exp;
+    currentNode->expStrLen = expLen;
+
+    // Find first high level operation character
+    for ( j = 0, i = "(&|"; j < 3; j++, i++ )
+    {
+        tmp = strchr( exp, *i );
+        if ( tmp != NULL && tmp < op )
+            op = tmp;
     }
-
-    if ( complex == false )
-        fill( Expression );
-
-    if ( complex == true )
-    {        //start
-
-        //clearExpGlobals(); //05/09/12 clear the exp globals array
-
-        Exp_Global_Number = tokenize( Expression );
-
-        fprintf( logfile, "exp_gn is:%d\n", Exp_Global_Number );
-        //mytrim the exps
-        for ( i = 0; i < Exp_Global_Number; i++ )
+    // If '(', '&', or '|' found
+    if ( op < exp + expLen )
+    {
+        switch (*op)
         {
-            trim( expression_Global[i] );
-        }
-
-        //start logic
-        for ( i = 0; i < Exp_Global_Number; i++ )
-        {
-            if ( expression_Global[i][0] == '&'
-                    || expression_Global[i][0] == '|' )
-            {
-                plogic[i] = expression_Global[i][0];
-                expression_Global[i][0] = ' ';
-            }
-        }
-        //end logic
-        for ( i = 0; i < Exp_Global_Number; i++ )
-        {
-            l = strlen( expression_Global[i] );
-            l--;
-            if ( expression_Global[i][l] == '&'
-                    || expression_Global[i][l] == '|' )
-            {
-                if ( plogic[i] != '&' && plogic[i] != '|' )
-                    plogic[i] = expression_Global[i][l];
+            case '&':
+                currentNode->lhs = parseExpression( exp, op-exp);
+                currentNode->rhs = parseExpression( op+1, expLen - ( op - exp + 1 ) );
+                currentNode->op = AND;
+                if ( currentNode->lhs == NULL || currentNode->rhs == NULL )
+                {
+                    free(currentNode);
+                    return NULL;
+                }
+                return currentNode;
+            case '|':
+                currentNode->lhs = parseExpression( exp, op-exp);
+                currentNode->rhs = parseExpression( op+1, expLen - ( op - exp + 1 ) );
+                currentNode->op = OR;
+                if ( currentNode->lhs == NULL || currentNode->rhs == NULL )
+                {
+                    free(currentNode);
+                    return NULL;
+                }
+                return currentNode;
+            case '(':
+                // Check for non-space chars before open paren.
+                newExpLen = getParenthesisExp( &op, expLen );
+                if ( newExpLen == -1 )
+                {
+                    logMessage( stderr, "Invalid '('\n", *i);
+                    free(currentNode);
+                    return NULL;
+                }
+                for ( i = exp; i < op; i++ )
+                {
+                    if ( *i == '!' )
+                    {
+                        notExists = true;
+                    }
+                    else if ( ! isspace(*i) )
+                    {
+                        logMessage( stderr, "Need operator between '%c' and '('\n", *i);
+                        free(currentNode);
+                        return NULL;
+                    }
+                }
+                if ( notExists )
+                {
+                    tmpNode = newExp();
+                    tmpNode->expStr = op;
+                    tmpNode->expStrLen = newExpLen;
+                    tmpNode->op = PAREN;
+                    tmpNode->lhs = parseExpression( op + 1, newExpLen - 2 );
+                    // NOT before a paren
+                    if ( tmpNode->lhs == NULL )
+                    {
+                        free(tmpNode);
+                        free(currentNode);
+                        return NULL;
+                    }
+                    currentNode->op = NOT;
+                    currentNode->lhs = tmpNode;
+                }
                 else
                 {
-                    k = i;
-                    k++;
-                    fprintf( logfile, "K is:%d\n", k );
-                    plogic[k] = expression_Global[i][l];
-                }
-
-                expression_Global[i][l] = '\0';
-            }
-        }
-
-        //mytrim again
-        for ( i = 0; i < Exp_Global_Number; i++ )
-        {
-            trim( expression_Global[i] );
-        }
-        shuffle( Exp_Global_Number );
-        Exp_Global_Number = shuffle2( Exp_Global_Number );
-    }        //end of case: complex == true. ()
-    return 0;
-}
-
-int tuple_populate( char *tuple_str )
-{
-    int ic = 0;
-    while ( tuple_str != NULL )
-    {
-        sprintf( tuple[ic++], "%s", tuple_str );
-        tuple_str = strtok( NULL, " " );
-    }
-    return 0;
-}
-
-int get_element(xmlNode * a_node, char *element_name, char operator, char *value)
-{
-    xmlNode *cur_node = NULL;
-    int i, j;
-    static int f = 0;
-    int numeric_v, num;
-    bool string = false;
-
-    for (i=0, j = 0, cur_node = a_node; cur_node; i++, j++, cur_node = cur_node->next)
-    {
-
-        if (cur_node->type != 0)
-        {
-            //fprintf(logfile, "get_element: Element name: %s\n", cur_node->name);
-            //fprintf(logfile, "get_element: value: %s\n", cur_node->content);
-            if (f == 1 && xmlStrEqual(cur_node->name, (xmlChar *) "text" ) == 1)
-            {
-                numeric_v = atoi((char *)cur_node->content);
-                //fprintf(logfile, "get_element: numeric_v is: %d\n", numeric_v);
-                num = atoi(value);
-
-                //test whether the value is a string
-                if (isalpha(value[0]) != 0)
-                string = true;
-
-                if (operator == '=')
-                {
-                    if (string != true)
+                    currentNode->op = PAREN;
+                    currentNode->lhs = parseExpression( op + 1, newExpLen - 2 );
+                    if ( currentNode->lhs == NULL )
                     {
-                        if (numeric_v == num)
-                        {
-                            fprintf(logfile, "get_element: = FOUND!%s\n", value);
-                            f = 0;
-                            return(0);
-                        }
-                        else
-                        {
-                            f = 0;
-                            return(-1);
-                        }
-                    }
-                    if (string == true)
-                    {
-                        if (strcmp ((char *)cur_node->content, value) == 0)
-                        {
-                            fprintf(logfile, "get_element: = FOUND!%s\n", value);
-                            f = 0;
-                            return(0);
-                        }
-                        else
-                        {
-                            f = 0;
-                            return(-1);
-                        }
+                        free(currentNode);
+                        return NULL;
                     }
                 }
-                if (operator == '>')
+                for ( i = op + newExpLen; i < exp + expLen; i++ )
                 {
-                    if (numeric_v > num)
+                    if ( *i == '&'
+                            || *i == '|'
+                            || *i == '='
+                            || *i == '>'
+                            || *i == '<'
+                                    )
                     {
-                        fprintf(logfile, "get_element: > FOUND!%s\n", value);
-                        f = 0;
-                        return(0);
-                    }
-                    else
-                    {
-                        f = 0;
-                        return(-1);
-                    }
-                }
-                if (operator == '<')
-                {
-                    if (numeric_v < num)
-                    {
-                        fprintf(logfile, "get_element: < FOUND!%s\n", value);
-                        f = 0;
-                        return(0);
-                    }
-                    else
-                    {
-                        f = 0;
-                        return(-1);
-                    }
-                }
-                if (operator == '!')
-                {
-                    if (string != true)
-                    {
-                        if (numeric_v != num)
+                        switch ( *i )
                         {
-                            fprintf(logfile, "get_element: ! FOUND!%s\n", value);
-                            f = 0;
-                            return(0);
-                        }
-                        else
-                        {
-                            f = 0;
-                            return(-1);
-                        }
-                    }
-                    if (string == true)
-                    {
-                        if (strcmp ((char *)cur_node->content, value) != 0)
-                        {
-                            fprintf(logfile, "get_element: ! FOUND!%s\n", value);
-                            f = 0;
-                            return(0);
-                        }
-                        else
-                        {
-                            f = 0;
-                            return(-1);
-                        }
-                    }
-
-                }
-                f = 0;
-                return(-1);
-            }
-            if (xmlStrEqual(cur_node->name, (xmlChar *) element_name) == 1)
-            {
-                //fprintf(logfile, "get_element: Element name: %s\n", cur_node->name);
-                fprintf(logfile, "get_element: operator is: %c\n", operator);
-                if (f == 0)
-                f = 1;
-            }
-        }
-        if (get_element(cur_node->children, element_name, operator, value) == 0)
-        {
-            return 0;
-        }
-
-    }         //end of for loop
-
-    return -1;
-
-}
-
-int get_attribute(xmlNode * a_node, char *attribute_name, char operator, char *value)
-{
-    xmlNode *cur_node = NULL;
-    xmlChar * buf;
-    static int f = 0;
-    int numeric_v, num;
-    bool string = false;
-
-    for (cur_node = a_node; cur_node; cur_node = cur_node->next)
-    {
-
-        if (cur_node->type != 0)
-        {
-            // fprintf(logfile, "get_attribute: Element name: %s\n", cur_node->name);
-            // fprintf(logfile, "get_attribute: value: %s\n", cur_node->content);
-            /*
-             if (f == 1 && xmlStrEqual(cur_node->name, (xmlChar *) "text" ) == 1)
-             */
-            if (f == 1)
-            {
-                if (cur_node->properties != NULL)
-                {
-                    if (cur_node->properties->type == XML_ATTRIBUTE_NODE)
-                    {
-
-                        buf = xmlGetProp(cur_node, (xmlChar *) attribute_name);
-                        //numeric_v = atoi((char *)cur_node->content);
-
-                        if (buf == NULL)
-                        continue;
-
-                        numeric_v = atoi((char *)buf);
-                        num = atoi(value);
-
-                        //test whether the value is a string
-                        if (isalpha(value[0]) != 0)
-                        string = true;
-
-                        if (operator == '=')
-                        {
-                            if (string != true)
-                            {
-                                if (numeric_v == num)
-                                {
-                                    fprintf(logfile, "get_attribute: = FOUND!%s\n", value);
-                                    f = 0;
-                                    return(0);
-                                }
-                                else
-                                {
-                                    f = 0;
-                                    return(-1);
-                                }
-                            }
-                            if (string == true)
-                            {
-                                if (strcmp ((char *)buf, value) == 0)
-                                {
-                                    fprintf(logfile, "get_attribute: = FOUND!%s\n", value);
-                                    f = 0;
-                                    return(0);
-                                }
-                                else
-                                {
-                                    f = 0;
-                                    return(-1);
-                                }
-                            }
-                        }
-                        if (operator == '>')
-                        {
-                            if (numeric_v > num)
-                            {
-                                fprintf(logfile, "get_attribute: > FOUND!%s\n", value);
-                                f = 0;
-                                return(0);
-                            }
-                            else
-                            {
-                                f = 0;
-                                return(-1);
-                            }
-                        }
-                        if (operator == '<')
-                        {
-                            if (numeric_v < num)
-                            {
-                                fprintf(logfile, "get_attribute: < FOUND!%s\n", value);
-                                f = 0;
-                                return(0);
-                            }
-                            else
-                            {
-                                f = 0;
-                                return(-1);
-                            }
-                        }
-                        if (operator == '!')
-                        {
-                            if (string != true)
-                            {
-                                if (numeric_v != num)
-                                {
-                                    fprintf(logfile, "get_attribute: ! FOUND!%s\n", value);
-                                    f = 0;
-                                    return(0);
-                                }
-                                else
-                                {
-                                    f = 0;
-                                    return(-1);
-                                }
-                            }
-                            if (string == true)
-                            {
-                                if (strcmp ((char *)buf, value) != 0)
-                                {
-                                    fprintf(logfile, "get_attribute: ! FOUND!%s\n", value);
-                                    f = 0;
-                                    return(0);
-                                }
-                                else
-                                {
-                                    f = 0;
-                                    return(-1);
-                                }
-                            }
-
-                        }
-                        f = 0;
-                        xmlFree(buf);
-                        return(-1);
-                    }        //end of type == XML_ATTRIBUTE_NODE
-                }        //end of properties != NULL
-            }        //end of if (f == 1)
-
-            if (f == 0)
-            f = 1;
-
-        }        //end of type != 0
-        if (get_attribute(cur_node->children, attribute_name, operator, value) == 0)
-        {
-            return 0;
-        }
-
-    }        //end of for loop
-    return -1;
-}
-
-int fill( char * exp )
-{
-    int l = 0;
-    int ll = 1;
-    int np = 1;
-    int i;
-    char tmp[256];
-    char *tuple_str;
-
-    //we should preserve the original expg[] arrays and work with tmp copy
-    strcpy( tmp, exp );
-
-    for ( i = 0; i < strlen( exp ); i++ )
-    {
-        if ( isspace( exp[i] ) )
-            np++;
-    }
-    fprintf( logfile, "np is:%d\n", np );
-
-    fprintf( logfile, "exp is:%s\n", exp );
-
-    for ( i = 0; i < np; i++ )
-    {
-        tuple_str = strtok( tmp, " " );
-        tuple_populate( tuple_str );
-    }
-
-    fprintf( logfile, "tuple_str is:%s\n", tuple_str );
-
-    for ( i = 0; i < np; i++ )
-    {
-        fprintf( logfile, "%s\n", tuple[i] );
-    }
-
-    for ( i = 0; i < np; i += 4, l++, ll++ )
-    {
-        strcpy( element[l], tuple[i] );
-        operator[l] = tuple[i+1][0];
-        strcpy( value[l], tuple[i + 2] );
-        logic[ll] = tuple[i + 3][0];
-    }
-    logic[0] = logic[1];
-    return 0;
-}
-
-int ip_range( char *p1, char *p2, uint32_t pn, uint32_t cn )
-{
-
-    int i;
-    uint32_t nnetmask;
-    struct sockaddr_in sin;
-    uint32_t ipa;
-    uint32_t ipb;
-    uint32_t wildcard_dec;
-    uint32_t netmask_dec;
-
-//IPv6 stuff
-    bool ipv6 = false;
-    int rem, times;
-    struct sockaddr_in6 sin6;
-    uint32_t ipa6[4];
-    uint32_t ipb6[4];
-    uint32_t mask[4]; //raw mask
-    uint32_t fabmask[4]; //fabricated mask
-
-    if ( strlen( p2 ) <= INET6_ADDRSTRLEN && strchr( p2, ':' ) != NULL )
-        ipv6 = true;
-
-    if ( exactflag == 1 )
-    {
-        if ( pn != cn )
-            return -1;
-        else nnetmask = cn;
-    }
-    if ( moreflag == 1 )
-    {
-        if ( pn <= cn )
-            return -1;
-        else nnetmask = cn;
-    }
-    if ( lessflag == 1 )
-    {
-        if ( pn >= cn )
-            return -1;
-        else nnetmask = pn;
-    }
-
-    fprintf( logfile, "ip_range: prefix netmask:%d\n", pn );
-    fprintf( logfile, "ip_range: cmd netmask:%d\n", cn );
-    fprintf( logfile, "ip_range: nnetmask:%d\n", nnetmask );
-
-//setting netmask_dec for IPv4
-    wildcard_dec = pow( 2, ( 32 - nnetmask ) ) - 1;
-    netmask_dec = ~wildcard_dec;
-
-//fprintf(logfile, "wildcard: %ld\n", wildcard_dec);
-//fprintf(logfile, "netmask_dec: %ld\n", netmask_dec);
-
-//setting mask array to all zeroes
-    for ( i = 0; i < 4; i++ )
-        mask[i] = 0;
-//setting fab mask array to all zeroes
-    for ( i = 0; i < 4; i++ )
-        fabmask[i] = 0;
-
-//in case it is IPv6
-    if ( ipv6 == true )
-    {
-
-//setting remainder & times
-        rem = nnetmask % 32;
-        times = nnetmask / 32;
-        fprintf( logfile, "ip_range: rem is:%d\n", rem );
-        fprintf( logfile, "ip_range: times is:%d\n", times );
-
-//setting mask array
-        if ( rem == 0 && times > 0 )
-        {
-            for ( i = 0; i < times; i++ )
-                mask[i] = 32;
-        }
-//setting mask array
-        if ( rem > 0 && times > 0 )
-        {
-            for ( i = 0; i < times; i++ )
-                mask[i] = 32;
-            mask[i] = rem;
-        }
-
-        for ( i = 0; i < 4; i++ )
-            fprintf( logfile, "ip_range: mask array is:%d\n", mask[i] );
-
-        if ( inet_pton( AF_INET6, p1, &sin6.sin6_addr ) <= 0 )
-        {
-            perror( "ip_range: p1:error converting IPv6 address!" );
-            return -1;
-        }
-        else ipv6 = true;
-
-        ipa6[0] = ntohl( sin6.sin6_addr.s6_addr[0] );
-        ipa6[1] = ntohl( sin6.sin6_addr.s6_addr[1] );
-        ipa6[2] = ntohl( sin6.sin6_addr.s6_addr[2] );
-        ipa6[3] = ntohl( sin6.sin6_addr.s6_addr[3] );
-
-        fprintf( logfile, "ip_range: ipa6 0:%d\n", ipa6[0] );
-        fprintf( logfile, "ip_range: ipa6 1:%d\n", ipa6[1] );
-        fprintf( logfile, "ip_range: ipa6 2:%d\n", ipa6[2] );
-        fprintf( logfile, "ip_range: ipa6 3:%d\n", ipa6[3] );
-
-        if ( inet_pton( AF_INET6, p2, &sin6.sin6_addr ) <= 0 )
-        {
-            perror( "ip_range: p2:error converting IPv6 address!" );
-            return -1;
-        }
-        else ipv6 = true;
-
-        ipb6[0] = ntohl( sin6.sin6_addr.s6_addr[0] );
-        ipb6[1] = ntohl( sin6.sin6_addr.s6_addr[1] );
-        ipb6[2] = ntohl( sin6.sin6_addr.s6_addr[2] );
-        ipb6[3] = ntohl( sin6.sin6_addr.s6_addr[3] );
-
-        fprintf( logfile, "ip_range: ----------------------------------\n" );
-
-        fprintf( logfile, "ip_range: ipb6 0:%d\n", ipb6[0] );
-        fprintf( logfile, "ip_range: ipb6 1:%d\n", ipb6[1] );
-        fprintf( logfile, "ip_range: ipb6 2:%d\n", ipb6[2] );
-        fprintf( logfile, "ip_range: ipb6 3:%d\n", ipb6[3] );
-
-//lets set the bits in the fab mask accordingly
-        for ( i = 0; i < 4; i++ )
-        {
-            wildcard_dec = pow( 2, ( 32 - mask[i] ) ) - 1;
-            netmask_dec = ~wildcard_dec;
-            fabmask[i] = netmask_dec;
-        }
-
-        for ( i = 0; i < 4; i++ )
-            fprintf( logfile, "ip_range: fab mask array is:%d\n", fabmask[i] );
-
-        for ( i = 0; i < 4; i++ )
-        {
-            if ( ( ipa6[i] & fabmask[i] ) == ( ipb6[i] & fabmask[i] ) )
-                ;
-            else return -1;
-        }
-
-        return 0;
-
-    } //end of ipv6 == true
-
-//inet_pton(AF_INET, p1, &sin.sin_addr.s_addr);
-//inet_pton(AF_INET, p2, &sin.sin_addr.s_addr);
-
-//in case it is IPv4
-    if ( inet_pton( AF_INET, p1, &sin.sin_addr.s_addr ) <= 0 )
-    {
-        perror( "ip_range: p1:error converting IPv4 address!" );
-        return -1;
-    }
-    else ipa = ntohl( sin.sin_addr.s_addr );
-
-    if ( inet_pton( AF_INET, p2, &sin.sin_addr.s_addr ) <= 0 )
-    {
-        perror( "ip_range: p2:error converting IPv4 address!" );
-        return -1;
-    }
-    else ipb = ntohl( sin.sin_addr.s_addr );
-
-    fprintf( logfile, "ip_range: p1 content:%s\n", p1 );
-    fprintf( logfile, "ip_range: p2 content:%s\n", p2 );
-
-    fprintf( logfile, "ip_range: ------------------\n" );
-
-//*
-    uint32_t a = ipa & netmask_dec;
-    fprintf( logfile, "ip_range: a: %d\n", a );
-    uint32_t b = ipb & netmask_dec;
-    fprintf( logfile, "ip_range: b: %d\n", b );
-//*/
-
-    if ( ( ipa & netmask_dec ) == ( ipb & netmask_dec ) )
-        return 0;
-    else return -1;
-}
-
-int get_prefix(xmlNode * a_node, char *element_name, char operator, char *value)
-{
-    xmlNode *cur_node = NULL;
-    int xox = -1;
-    int zoz = -1;
-
-    char buf[2*512];
-    char str[2*512];
-    char ip[INET_ADDRSTRLEN];
-    char cidr[INET_ADDRSTRLEN];
-
-    int i, j, z, r;
-
-    int dot = 0;
-    int sl = 0;
-    uint32_t prefix_netmask;
-
-    uint32_t netmask;
-    char tmp[INET6_ADDRSTRLEN];
-    char dmp[INET6_ADDRSTRLEN];
-
-//setting operator flag 
-    switch (operator)
-    {
-        case 'e':
-        exactflag = 1;
-        break;
-        case 'l':
-        lessflag = 1;
-        break;
-        case 'm':
-        moreflag = 1;
-        break;
-        default:
-        abort ();
-    }
-
-    fprintf(logfile, "get_prefix: operator is:%c\n", operator);
-
-//setting netmask
-    memset(tmp, '\0', INET6_ADDRSTRLEN);
-    memset(dmp, '\0', INET6_ADDRSTRLEN);
-
-    for (i=0; i < strlen (value); i++)
-    {
-        if (value[i] == '/')
-        {
-            tmp[0] = value[i+1];
-            if (isdigit(value[i+2]))
-            tmp[1] = value[i+2];
-            //ipv6 check
-            if (strchr(value, ':') != NULL)
-            if (isdigit(value[i+3]))
-            tmp[2] = value[i+3];
-
-            break;
-        }
-    }
-
-    fprintf(logfile, "get_prefix:tmp is:%s\n", tmp);
-    netmask = atol(tmp);
-    fprintf(logfile, "get_prefix:netmask:%d\n", netmask);
-
-//setting net
-    memset(tmp, '\0', INET6_ADDRSTRLEN);
-
-    for (i=0; i < strlen (value); i++)
-    {
-        if (value[i] == '/')
-        {
-            strncpy(tmp, value, i);
-            break;
-        }
-    }
-
-    fprintf(logfile, "get_prefix:tmp is:%s\n", tmp);
-    strcpy(dmp, tmp);
-    fprintf(logfile, "get_prefix:dmp is:%s\n", dmp);
-    fprintf(logfile, "get_prefix:value is:%s\n", value);
-
-//function processing starts here
-
-    for (i=0, j = 0, cur_node = a_node; cur_node; i++, j++, cur_node = cur_node->next)
-    {
-
-        if (cur_node->type != 0)
-        {
-            fprintf(logfile, "get_prefix:node type: Element name: %s\n", cur_node->name);
-            fprintf(logfile, "get_prefix:node content: %s\n", cur_node->content);
-
-            if (strcmp(element_name, "PREFIX" ) == 0)
-            {
-                if (xmlStrEqual(cur_node->name, (xmlChar *) "text" ) == 1 && xmlStrlen(cur_node->content) <= INET6_ADDRSTRLEN )
-                {
-                    fprintf(logfile, "get_prefix:search () node content: %s\n", cur_node->content);
-                    snprintf(buf, xmlStrlen(cur_node->content)+1, "%s", cur_node->content);
-                    //fprintf(logfile, "xml  buffer is:  %s\n", buf);
-
-                    strcpy (str, buf);
-                    fprintf(logfile, "get_prefix:char str is: %s\n", str);
-
-                    for (z=0; z < strlen (str); z++)
-                    if (str[z] == '.')
-                    dot++;
-
-//setting net
-                    //if (dot == 2)  //08/16/11: it seems the PREFIX format has changed - now we need 3 dots in IP
-                    if (dot == 3)
-                    { //08/16/11: 3 dots in IP
-                        for (z=0; z < strlen (str); z++)
-                        {
-                            if (str[z] == '/')
-                            {
-                                sl = 1;
-                                fprintf(logfile, "get_prefix:set sl to:%d\n", sl);
-                                memset(ip, '\0', INET_ADDRSTRLEN);
-                                strncpy(ip, str, z);
-                                //strcat(ip, ".0");//08/16/11:it seems the PREFIX format has changed - since 3 dots are in IP - no need to append .0 at the end
+                            case '&':
+                                opChar = AND;
                                 break;
-                            }
+                            case '|':
+                                opChar = OR;
+                                break;
+                            case '=':
+                                opChar = EQUAL;
+                                break;
+                            case '>':
+                                opChar = GREATER;
+                                break;
+                            case '<':
+                                opChar = LESS;
+                                break;
                         }
-                    }
-
-                    fprintf(logfile, "get_prefix:dot is:%d\n", dot);
-
-//setting netmask
-                    memset(cidr, '\0', INET_ADDRSTRLEN);
-
-                    for (z=0; z < strlen (str); z++)
-                    {
-                        if (str[z] == '/')
+                        tmpNode = newExp();
+                        tmpNode->expStr = exp;
+                        tmpNode->expStrLen = i-exp;
+                        tmpNode->op = currentNode->op;
+                        tmpNode->lhs = currentNode->lhs;
+                        currentNode->op = opChar;
+                        currentNode->lhs = tmpNode;
+                        currentNode->rhs = parseExpression( i+1, expLen - ( i - exp + 1 ) );
+                        if ( currentNode->lhs == NULL || currentNode->rhs == NULL )
                         {
-                            cidr[0] = str[z+1];
-                            if (isdigit(str[z+2]))
-                            cidr[1] = str[z+2];
-                            break;
+                            free(currentNode);
+                            return NULL;
                         }
+                        return currentNode;
                     }
-
-                    fprintf(logfile, "get_prefix:cidr is:%s\n", cidr);
-                    prefix_netmask = atol(cidr);
-                    fprintf(logfile, "get_prefix:prefix_netmask:%d\n", prefix_netmask);
-
-                    if (sl == 1)
+                    else if ( ! isspace(*i) )
                     {
-                        fprintf(logfile, "get_prefix:char ip is: %s\n", ip);
-                        if ((r = ip_range(ip, dmp, prefix_netmask, netmask)) == 0)
-                            fprintf(logfile, "get_prefix:%d: string matched!\n", r);
-                        else if (r == -1)
-                            fprintf(logfile, "get_prefix:string did not match!\n");
-
-                        if (r == 0)
-                        {
-                            fprintf(logfile, "get_prefix:%d: inside search() - testing match!\n", 0);
-                            return 0;
-                        }
-                    } //end of sl == 1
-                } //end of ->name == text
-
-            } //end of PREFIX == 0
-
-            if (xmlStrEqual(cur_node->name, (xmlChar *) element_name ) == 1)
-            if (xox == -1)
-            xox=i;
-            if (xmlStrEqual(cur_node->content, (xmlChar *) value ) == 1)
-            if (zoz == -1)
-            zoz=j;
-
-        } //end of ->type != 0
-
-        //    fprintf(logfile, "RETURN!\n");
-
-        if (xox != -1 && zoz != -1)
-        {
-            fprintf(logfile, "get_prefix: found %s =    %s\n\n", element_name, content);
-            return 0;
+                        logMessage( stderr, "Invalid character '%c' after ')'\n", *i);
+                        if ( currentNode->lhs )
+                            free( currentNode->lhs );
+                        free( currentNode );
+                        return NULL;
+                    }
+                }
+                return currentNode;
+            default:
+                break;
         }
+    }
 
-        if ( get_prefix(cur_node->children, element_name, operator, value ) == 0)
-        {
-            return 0;
-        }
-    } //end of for loop
-    return -1;
-}
-
-// populate expression_Global by breaking up exp into
-// multiple strings on '(' and ')' characters
-// Return count of the strings populated in expression_Global
-int tokenize( char *exp )
-{
-    int i, h, l, k;
-    i = 0;
-    h = 0;
-    l = 0;
-    k = strlen( exp );
-    for ( l = 0; l < k; l++ )
+    // Handle NOT and get rid of leading white space.
+    // NOTE: cannot use trim since trim changes the string it operates on.
+    for ( i = exp; i < exp+expLen; i++ )
     {
-        if ( exp[l] != '(' && exp[l] != ')' )
+        if ( *i == '!' )
         {
-            expression_Global[h][i] = exp[l];
-            i++;
+            // NOT before a paren
+            currentNode->op = NOT;
+            currentNode->lhs = parseExpression( i + 1, expLen - (i - exp + 1) );
+            if ( currentNode->lhs == NULL )
+            {
+                free(currentNode);
+                return NULL;
+            }
+            return currentNode;
         }
+        else if ( ! isspace(*i) )
+        {
+            break;
+        }
+        currentNode->expStrLen--;
+    }
+    currentNode->expStr = i;
+
+    // Find first low level operation character
+    for ( j = 0, i = "=><"; j < 3; j++, i++ )
+    {
+        tmp = strchr( exp, *i );
+        if ( tmp != NULL && tmp < op )
+            op = tmp;
+    }
+    // If '=', '>', or '<' found
+    if ( op < exp + expLen )
+    {
+        currentNode->lhs = parseExpression( exp, op-exp);
+        currentNode->rhs = parseExpression( op+1, expLen - ( op - exp + 1 ) );
+        if ( currentNode->lhs == NULL || currentNode->rhs == NULL )
+        {
+            free(currentNode);
+            return NULL;
+        }
+        switch (*op)
+        {
+            case '=':
+                currentNode->op = EQUAL;
+                return currentNode;
+            case '>':
+                currentNode->op = GREATER;
+                return currentNode;
+            case '<':
+                currentNode->op = LESS;
+                return currentNode;
+            default:
+                break;
+        }
+    }
+
+    // Exp is a primitive (Field name or value)
+    // get rid of trailing whitespace
+    for ( i = currentNode->expStr+currentNode->expStrLen-1; i >= currentNode->expStr; i-- )
+    {
+        if ( isspace(*i) )
+            currentNode->expStrLen--;
         else
-        {
-            i = 0;
-            if ( l != 0 )
-                h++;
-        }
+            break;
     }
-    return h;
+    if (  currentNode->expStrLen <= 0 )
+    {
+        logMessage( stderr, "Empty primitive\n", *i);
+        free(currentNode);
+        return NULL;
+    }
+    currentNode->op = PRIMITIVE;
+    currentNode->isValue = true;
+    for ( j = 0, i = currentNode->expStr; j < currentNode->expStrLen; j++, i++ )
+    {
+        if ( isalpha( *i ) )
+            currentNode->isValue = false;
+    }
+    currentNode->expStrValue = strtold( currentNode->expStr, NULL );
+    currentNode->isAttr = ( strncmp( currentNode->expStr, "length", currentNode->expStrLen ) == 0
+                         || strncmp( currentNode->expStr, "version", currentNode->expStrLen ) == 0
+                         || strncmp( currentNode->expStr, "type", currentNode->expStrLen ) == 0
+                         || strncmp( currentNode->expStr, "value", currentNode->expStrLen ) == 0
+                         || strncmp( currentNode->expStr, "code", currentNode->expStrLen ) == 0
+                         || strncmp( currentNode->expStr, "timestamp", currentNode->expStrLen ) == 0
+                         || strncmp( currentNode->expStr, "datetime", currentNode->expStrLen ) == 0
+                         || strncmp( currentNode->expStr, "precision_time", currentNode->expStrLen ) == 0
+                         || strncmp( currentNode->expStr, "withdrawn_len", currentNode->expStrLen ) == 0
+                         || strncmp( currentNode->expStr, "path_attr_len", currentNode->expStrLen ) == 0
+                         || strncmp( currentNode->expStr, "label", currentNode->expStrLen ) == 0 );
+    currentNode->expXmlStr = malloc(currentNode->expStrLen + 1 );
+    strncpy( (char *)currentNode->expXmlStr, currentNode->expStr, currentNode->expStrLen );
+    return currentNode;
 }
 
-int harvest( char *exp, xmlNode *root_element )
+char * get_attribute( xmlNode * a_node, xmlChar * name )
 {
-    int i;
-//clear the globals
-    for ( i = 0; i < 256; i++ )
+    xmlNode * cur;
+    char * tmp;
+    xmlChar * buf;
+    for( cur = a_node; cur != NULL; cur = cur->next )
     {
-        memset( element[i], '\0', sizeof( element[i] ) );
-        operator[i] = '\0';
-        memset( value[i], '\0', sizeof( value[i] ) );
-        logic[i] = '\0';
-        memset( tuple[i], '\0', sizeof( tuple[i] ) );
+        if ( cur->properties != NULL  && cur->properties->type == XML_ATTRIBUTE_NODE )
+        {
+            buf = xmlGetProp( cur, name );
+            if ( buf )
+                return (char*)buf;
+        }
+        tmp = get_attribute(cur->children, name);
+        if ( tmp )
+            return tmp;
     }
-//fill the globals
-    fill( exp );
-    if ( analyse( root_element ) == 0 )
-        return 0;
-    else return -1;
+    return NULL;
 }
 
-int shuffle( int exp_gn )
+char * get_element( xmlNode * a_node, xmlChar * name, bool elementFound )
 {
-    int i, k;
-    char exp_tmp[256][MAX_LINE];
-
-    for ( i = 0; i < 256; i++ )
+    xmlNode * cur;
+    char * tmp;
+    for( cur = a_node; cur != NULL; cur = cur->next )
     {
-        memset( exp_tmp[i], '\0', sizeof( exp_tmp[i] ) );
+        if ( elementFound && cur->type == XML_TEXT_NODE )
+        {
+            return (char*)cur->content;
+        }
+        if ( cur->type == XML_ELEMENT_NODE && xmlStrEqual( cur->name, name ) )
+        {
+            elementFound = true;
+        }
+        tmp = get_element(cur->children, name, elementFound);
+        elementFound = false;
+        if ( tmp )
+            return tmp;
+    }
+    return NULL;
+}
+
+bool stringCompare ( const char * value, const char * exp, int expLen, bool prevWild )
+{
+    const char * i;
+    const char * expEnd;
+    const char * wild;
+
+    // Return true if no string length
+    if ( ! expLen )
+        return true;
+
+    // Find next wild chard in exp and set search area between exp and expEnd
+    wild = strchr( exp, '%' );
+    if ( wild && wild < exp + expLen )
+    {
+        expEnd = wild;
+    }
+    else
+    {
+        wild = NULL;
+        expEnd = exp + expLen;
     }
 
-    for ( i = 0, k = 0; i < exp_gn; i++ )
+    if ( prevWild )
     {
-        if ( strlen( expression_Global[i] ) != 0 )
+        // If you had a previous wild card, find all matches in value of the substring between exp and expEnd
+        for ( i = value; *i ; i++ )
         {
-            strcpy( exp_tmp[k], expression_Global[i] );
-            k++;
+            if( strncmp(i, exp, expEnd - exp ) == 0 )
+            {
+                // Found match, recursively match the rest of exp after the wild card character
+                if ( wild && stringCompare( i + ( expEnd - exp ), wild + 1, expLen - ( expEnd - exp + 1), true ) )
+                    return true;
+                // Or if you matched to the end of value, and it is the end of exp, return true
+                else if ( !wild && strlen(i) == expLen )
+                    return true;
+            }
         }
     }
-    for ( i = 0; i < exp_gn; i++ )
+    else
     {
-        memset( expression_Global[i], '\0', sizeof( expression_Global[i] ) );
-        strcpy( expression_Global[i], exp_tmp[i] );
+        // If no previous wild, need to match from the beginning of value
+        if( strncmp( value, exp, expEnd - exp ) == 0 )
+        {
+            // Found match, recursively match the rest of exp after the wild card character
+            if ( wild && stringCompare( value + ( expEnd - exp ), wild + 1, expLen - ( expEnd - exp + 1), true ) )
+                return true;
+            // Or if you matched to the end of value, and it is the end of exp, return true
+            else if ( !wild && strlen(value) == expLen)
+                return true;
+
+        }
     }
+
+    // No match, return false
+    return false;
+}
+
+bool evaluateExpression ( Exp * n, xmlNode * a_node ) {
+    double value;
+    char * text;
+
+    if ( !n )
+        return true;
+    switch( n->op )
+    {
+        case EQUAL:
+            if ( n->lhs->isAttr )
+                text = get_attribute(a_node, n->lhs->expXmlStr);
+            else
+                text = get_element(a_node, n->lhs->expXmlStr, false);
+            if ( text )
+            {
+                if ( n->rhs->isValue )
+                {
+                    value = strtold(text, NULL);
+                    return value == n->rhs->expStrValue;
+                }
+                return stringCompare ( text, n->rhs->expStr, n->rhs->expStrLen, false );
+            }
+            return false;
+        case GREATER:
+            if ( n->lhs->isAttr )
+                text = get_attribute(a_node, n->lhs->expXmlStr);
+            else
+                text = get_element(a_node, n->lhs->expXmlStr, false);
+            if ( text )
+            {
+                if ( n->rhs->isValue )
+                {
+                    value = strtold(text, NULL);
+                    return value > n->rhs->expStrValue;
+                }
+                return strncmp( text, n->rhs->expStr, n->rhs->expStrLen ) > 0;
+            }
+            return false;
+        case LESS:
+            if ( n->lhs->isAttr )
+                text = get_attribute(a_node, n->lhs->expXmlStr);
+            else
+                text = get_element(a_node, n->lhs->expXmlStr, false);
+            if ( text )
+            {
+                if ( n->rhs->isValue )
+                {
+                    value = strtold(text, NULL);
+                    return value < n->rhs->expStrValue;
+                }
+                return strncmp( text, n->rhs->expStr, n->rhs->expStrLen ) < 0;
+            }
+            return false;
+        case NOT:
+            return ! evaluateExpression(n->lhs, a_node);
+        case AND:
+            return evaluateExpression(n->lhs, a_node) && evaluateExpression(n->rhs, a_node);
+        case OR:
+            return evaluateExpression(n->lhs, a_node) || evaluateExpression(n->rhs, a_node);
+        case PAREN:
+            return evaluateExpression(n->lhs, a_node);
+        case PRIMITIVE:
+            return true;
+    }
+    return false;
+}
+void deleteExpression( Exp * n ) {
+    if ( n->lhs != NULL )
+        deleteExpression(n->lhs);
+    if ( n->rhs != NULL )
+        deleteExpression(n->rhs);
+    if ( n->expXmlStr )
+        free( n->expXmlStr );
+    free(n);
+}
+
+int InitializeParseEngine( char *ev ) {
+    if ( root )
+        deleteExpression( root );
+    else
+        if ( pthread_mutex_init( &updateExpLock, NULL ) )
+        {
+            perror( "unable to init mutex ID lock" );
+            exit( 1 );
+        }
+    lockMutex( &updateExpLock );
+    if ( strlen(ev) )
+    {
+        root = parseExpression(ev, strlen(ev));
+        if ( !root )
+        {
+            logMessage(stderr, "Failed to parse expression \"%s\"\n", ev);
+            exit(-1);
+        }
+    }
+    else
+    {
+        root = NULL;
+    }
+    strcpy( Expression, ev );
+    unlockMutex( &updateExpLock );
     return 0;
-}
-
-int shuffle2( int exp_gn )
-{
-    int i, k;
-    char tmp[256];
-
-    for ( i = 0; i < 256; i++ )
-    {
-        tmp[i] = '\0';
-    }
-
-    if ( plogic[0] == '\0' && plogic[1] != '\0' )
-        plogic[0] = plogic[1];
-    if ( plogic[1] == '\0' && plogic[0] != '\0' )
-        plogic[1] = plogic[0];
-
-    for ( i = 0, k = 0; i < exp_gn; i++ )
-    {
-        if ( plogic[i] != '\0' )
-        {
-            tmp[k] = plogic[i];
-            k++;
-        }
-    }
-    for ( i = 0; i < exp_gn; i++ )
-    {
-        plogic[i] = '\0';
-        plogic[i] = tmp[i];
-    }
-    return k;
-}
-
-int getNumLogicalExpressions() {
-    int i = 0;
-    while ( logic[i] == '&' || logic[i] == '|' )
-    {
-        i++;
-    }
-
-    if ( i == 0 )
-        if ( strlen(element[0]) != 0 && operator[0] != 0 && strlen(value[0]) != 0 )
-            i = 1;
-    return i;
-}
-
-//the same as analyze but without writing to a file
-//used in complex expression handling
-int analyse( xmlNode *root_element )
-{
-    int exp_n = 0;
-    int cycle_and[256];
-    int cycle_or[256];
-    bool oracle_and = true;
-    bool oracle_or = false;
-    bool oracle = false;
-
-    int and_count = 0;
-    int or_count = 0;
-
-    int i;
-//lets fill the logic arrays with zeroes initially
-    for ( i = 0; i < 256; i++ )
-    {
-        cycle_and[i] = 0;
-        cycle_or[i] = 0;
-    }
-
-//lets count the number of expressions
-    exp_n = getNumLogicalExpressions();
-
-    fprintf( logfile, "exp_n is:%d\n", exp_n );
-
-//lets count the AND and OR
-    for ( i = 0; i < exp_n; i++ )
-    {
-        if ( logic[i] == '&' )
-            and_count++;
-        if ( logic[i] == '|' )
-            or_count++;
-    }
-
-    for ( i = 0; i < exp_n; i++ ) //loop through defined tags/attributes of the expression
-    {
-        if ( strcmp( element[i], "PREFIX" ) == 0 )
-        { //operate on specified network prefix
-            if ( get_prefix(root_element, element[i], operator[i], value[i]) == 0 )
-            {
-                if ( logic[i] == '&' )
-                {
-                    cycle_and[i] = 1;
-                }
-                if ( logic[i] == '|' )
-                {
-                    cycle_or[i] = 1;
-                }
-                if ( exp_n == 1 )
-                    oracle = true; //if there is just one exp
-            }
-        }
-        else if ( strcmp( element[i], "length" ) == 0
-                || strcmp( element[i], "version" ) == 0
-                || strcmp( element[i], "type" ) == 0
-                || strcmp( element[i], "value" ) == 0
-                || strcmp( element[i], "code" ) == 0
-                || strcmp( element[i], "timestamp" ) == 0
-                || strcmp( element[i], "datetime" ) == 0
-                || strcmp( element[i], "precision_time" ) == 0
-                || strcmp( element[i], "withdrawn_len" ) == 0
-                || strcmp( element[i], "path_attr_len" ) == 0
-                || strcmp( element[i], "label" ) == 0 )
-        { //operate on specified attributes
-            if ( get_attribute(root_element, element[i], operator[i], value[i]) == 0 )
-            {
-                if ( logic[i] == '&' )
-                {
-                    cycle_and[i] = 1;
-                }
-                if ( logic[i] == '|' )
-                {
-                    cycle_or[i] = 1;
-                }
-                if ( exp_n == 1 )
-                    oracle = true; //if there is just one exp
-            }
-        }
-        else
-        {
-            if ( get_element(root_element, element[i], operator[i], value[i]) == 0 )
-            { //operate on elements
-                if ( logic[i] == '&' )
-                {
-                    cycle_and[i] = 1;
-                }
-                if ( logic[i] == '|' )
-                {
-                    cycle_or[i] = 1;
-                }
-                if ( exp_n == 1 )
-                    oracle = true; //if there is just one exp
-            }
-        }
-    } //end of for loop
-    fprintf( logfile, "count AND: %d\n", and_count );
-    fprintf( logfile, "count OR: %d\n", or_count );
-
-    for ( i = 0; i < and_count; i++ )
-        fprintf( logfile, "cycle array AND: %d\n", cycle_and[i] );
-//for (i=0; i < or_count; i++)
-    for ( i = 0; i < 256; i++ )
-        if ( cycle_or[i] == 1 )
-            fprintf( logfile, "cycle array OR: %d\n", cycle_or[i] );
-
-//for (i=0; i < and_count; i++)
-    for ( i = 0; i < exp_n; i++ )
-    {
-        if ( cycle_and[i] != 1 )
-        {
-            oracle_and = false;
-            break;
-        }
-    }
-    for ( i = 0; i < exp_n; i++ )
-    {
-        if ( cycle_or[i] == 1 )
-        {
-            oracle_or = true;
-            break;
-        }
-    }
-    if ( oracle_and == true || oracle_or == true || oracle == true )
-    {
-        fprintf( logfile, "analyse returned true!\n" );
-        return 0;
-    }
-
-    return -1;
 }
 
 int analyze( const char *filename, xmlNode *root_element, char * buf )
 {
-    int exp_n = 0;
-    int cycle_and[256];
-    int cycle_or[256];
-    bool oracle_and = true;
-    bool oracle_or = false;
-    bool oracle = false;
-
-    bool and_found = false;
-
-    int and_count = 0;
-    int or_count = 0;
-
-    int i;
     int fd;
-
-    //case when complex = true
-    if ( complex == true )
+    lockMutex( &updateExpLock );
+    bool evalResult = evaluateExpression ( root, root_element );
+    unlockMutex( &updateExpLock );
+    if ( evalResult )
     {
-        //section to use after receiving xml chunk
-
-        for ( i = 0; i < Exp_Global_Number; i++ )
+        fprintf( logfile, "analyze: exp is true\n" );
+        fd = open( filename, O_CREAT | O_APPEND | O_RDWR, S_IRWU );
+        write( fd, buf, strlen( buf ) );
+        write( fd, "\n", 1 );
+        close(fd);
+        MatchingMessages++;
+        if ( serverflag == 1 )
         {
-            if ( plogic[i] == '&' )
-                and_found = true;
-        }
 
-        for ( i = 0; i < Exp_Global_Number; i++ )
-        {
-            if ( harvest( expression_Global[i], root_element ) == 0 )
-                truth[i] = 1;
-        }
-
-        for ( i = 0; i < Exp_Global_Number; i++ )
-            fprintf( logfile, "truth is:%d\n", truth[i] );
-
-        for ( i = 0; i < Exp_Global_Number; i++ )
-        {
-            if ( plogic[i] == '&' && truth[i] == 1 )
-                ;
-            else
-            {
-                if ( plogic[i] == '&' && truth[i] != 1 )
-                    Global_AND = false;
-                break;
-            }
-        }
-
-        for ( i = 0; i < Exp_Global_Number; i++ )
-        {
-            if ( plogic[i] == '|' && truth[i] == 1 )
-            {
-                Global_OR = true;
-                break;
-            }
-        }
-        if ( ( Global_AND == true && and_found == true )
-                || ( Global_OR == true ) )
-        {
-            fprintf( logfile, "analyze: complex exp - g_and is true\n" );
-            fd = open( filename, O_CREAT | O_APPEND | O_RDWR, S_IRWU );
-            if ( strlen( buf ) != 0 )
-                write( fd, buf, strlen( buf ) );
-            fprintf( logfile,
-                "analyze: complex exp - g_and is true - just about to write into file\n" );
-            //put the separator per message
-            write( fd, "\n", strlen( "\n" ) );
-            fprintf( logfile,
-                "analyze: complex exp - g_and is true - wrote into file\n" );
-
-            incMatchingMessages(); //increase the matching count
-
-            //now we put the data in queue as well
-            if ( serverflag == 1 )
-            {
-                if ( buf != NULL )
-                {
-                    int xlen = strlen( buf );
-                    if ( xlen > 64 ) //if xmlR is an actual full BGP message........
-                    {
-                        fprintf( logfile,
-                            "Writer: putting the message into the Queue\n" );
-                        //writeQueues((void *)data_ptr->out);
-                        writeQueueTable( getQueueTable(), buf );
-                    }
-                    else
-                    {
-                        fprintf( logfile,
-                            "Writer: not putting the message into the Queue\n" );
-                    }
-                }
-            }  //end of server flag
-
-            Global_AND = true; //restore to default
-            Global_OR = false; //restore to default
-            //initialize the parsing engine globals to nulls
-            for ( i = 0; i < 256; i++ )
-                truth[i] = 0;
-
-            close( fd );   //properly close the file to avoid running out of FDs
-            return 0;
-            //end of checking oracles
+            fprintf( logfile, "Writer: putting the message into the Queue\n" );
+            writeQueueTable( getQueueTable(), buf );
         }
         else
         {
-            fprintf( logfile, "g_and or g_or is false\n" );
-            //initialize the parsing engine globals to nulls
-            for ( i = 0; i < 256; i++ )
-                truth[i] = 0;
-            return -1;
+            fprintf( logfile, "Writer: not putting the message into the Queue\n" );
         }
-    } //end of case: complex = true
-
-    //General case when complex = false
-    //lets fill the logic arrays with zeroes initially
-    for ( i = 0; i < 256; i++ )
-    {
-        cycle_and[i] = 0;
-        cycle_or[i] = 0;
-    }
-
-    //lets count the number of expressions
-    i = 0;
-
-    while ( logic[i] == '&' || logic[i] == '|' )
-    {
-        i++;
-        exp_n++;
-    }
-
-    if ( exp_n == 0 )
-        if ( strlen(element[0]) != 0 && operator[0] != 0 && strlen(value[0]) != 0 )
-            exp_n = 1;
-
-    fprintf( logfile, "exp_n is:%d\n", exp_n );
-
-    //lets count the AND and OR
-    for ( i = 0; i < exp_n; i++ )
-    {
-        if ( logic[i] == '&' )
-            and_count++;
-        if ( logic[i] == '|' )
-            or_count++;
-    }
-
-    //loop through defined tags/attributes of the expression
-    for ( i = 0; i < exp_n; i++ )
-    {
-        if ( strcmp( element[i], "PREFIX" ) == 0 )
-        { //operate on specified network prefix
-            if ( get_prefix(root_element, element[i], operator[i], value[i]) == 0 )
-            {
-                if ( logic[i] == '&' )
-                {
-                    cycle_and[i] = 1;
-                }
-                if ( logic[i] == '|' )
-                {
-                    cycle_or[i] = 1;
-                }
-                if ( exp_n == 1 )
-                    oracle = true; //if there is just one exp
-            }
-        }
-        else if ( strcmp( element[i], "length" ) == 0
-                || strcmp( element[i], "version" ) == 0
-                || strcmp( element[i], "type" ) == 0
-                || strcmp( element[i], "value" ) == 0
-                || strcmp( element[i], "code" ) == 0
-                || strcmp( element[i], "timestamp" ) == 0
-                || strcmp( element[i], "datetime" ) == 0
-                || strcmp( element[i], "precision_time" ) == 0
-                || strcmp( element[i], "withdrawn_len" ) == 0
-                || strcmp( element[i], "path_attr_len" ) == 0
-                || strcmp( element[i], "label" ) == 0 )
-        { //operate on specified attributes
-            if ( get_attribute(root_element, element[i], operator[i], value[i]) == 0 )
-            {
-                if ( logic[i] == '&' )
-                {
-                    cycle_and[i] = 1;
-                }
-                if ( logic[i] == '|' )
-                {
-                    cycle_or[i] = 1;
-                }
-                if ( exp_n == 1 )
-                    oracle = true; //if there is just one exp
-            }
-        }
-        else
-        {
-            if ( get_element(root_element, element[i], operator[i], value[i]) == 0 )
-            { //operate on elements
-                if ( logic[i] == '&' )
-                {
-                    cycle_and[i] = 1;
-                }
-                if ( logic[i] == '|' )
-                {
-                    cycle_or[i] = 1;
-                }
-                if ( exp_n == 1 )
-                    oracle = true; //if there is just one exp
-            }
-        }
-
-        fprintf( logfile, "count AND: %d\n", and_count );
-        fprintf( logfile, "count OR: %d\n", or_count );
-
-        for ( i = 0; i < and_count; i++ )
-            fprintf( logfile, "cycle array AND: %d\n", cycle_and[i] );
-        //for (i=0; i < or_count; i++)
-        for ( i = 0; i < 256; i++ )
-            if ( cycle_or[i] == 1 )
-                fprintf( logfile, "cycle array OR: %d\n", cycle_or[i] );
-
-        //for (i=0; i < and_count; i++)
-        for ( i = 0; i < exp_n; i++ )
-        {
-            if ( cycle_and[i] != 1 )
-            {
-                oracle_and = false;
-                break;
-            }
-        }
-        for ( i = 0; i < exp_n; i++ )
-        {
-            if ( cycle_or[i] == 1 )
-            {
-                oracle_or = true;
-                break;
-            }
-        }
-
-        if ( oracle_and == true || oracle_or == true || oracle == true )
-        {
-            fprintf( logfile,
-                "analyze: simple exp - one of the oracles is true\n" );
-            fd = open( filename, O_CREAT | O_APPEND | O_RDWR, S_IRWU );
-            if ( strlen( buf ) != 0 )
-                write( fd, buf, strlen( buf ) );
-            //put the separator per message
-            write( fd, "\n", strlen( "\n" ) );
-
-            incMatchingMessages(); //increase the matching count
-
-            //now we put the data in queue as well
-            if ( serverflag == 1 )
-            {
-                if ( buf != NULL )
-                {
-                    int xlen = strlen( buf );
-                    if ( xlen > 64 ) //if xmlR is an actual full BGP message........
-                    {
-                        fprintf( logfile,
-                            "Writer: putting the message into the Queue\n" );
-                        //writeQueues((void *)data_ptr->out);
-                        writeQueueTable( getQueueTable(), buf );
-                    }
-                    else
-                    {
-                        fprintf( logfile,
-                            "Writer: not putting the message into the Queue\n" );
-                    }
-                }
-            } //end of server flag
-
-        } //end of checking oracles
-        close( fd ); //properly close the file to avoid running out of FDs
-        return 0;
     }
     return 0;
 }
@@ -1456,10 +615,3 @@ long long int getMatchingMessages()
 {
     return MatchingMessages;
 }
-
-void incMatchingMessages()
-{
-    MatchingMessages++;
-}
-
-
